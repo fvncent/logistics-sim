@@ -1,0 +1,48 @@
+# Operations model (M4). Every value is a modelling assumption (docs/ASSUMPTIONS.md).
+carrier_id: CR-01            # the own fleet carries every shipment until Phase 3 adds partners
+
+pickup:
+  runs: ["10:00", "16:00"]   # local times; all CREATED shipments at the depot are collected
+  travel_minutes: 60         # collection round until the batch reaches the depot dock
+
+dock:                        # dock doors are a FIFO resource per depot (capacity = dock_doors)
+  unload_base_minutes: 10
+  unload_seconds_per_parcel: 6
+  sort_minutes: 30           # after unloading, before a parcel can make a cutoff or a loop
+
+linehaul:
+  departures: {main: ["22:00"], feeder: ["07:00", "17:00"], direct: []}  # direct lane unused
+  vehicle_types: {main: [truck], feeder: [van], direct: [truck]}  # preference order
+  cutoff_minutes: 60         # parcel must be sorted this long before departure
+  min_fill_ratio: 0.05       # earlier departures of the day are skipped below this fill
+  retry_minutes: 30          # no vehicle/driver free: retry ...
+  max_wait_minutes: 240      # ... until this long after the slot, then wait for the next slot
+  speed_kmh: {truck: 55, van: 50}
+  handling_minutes: 30
+  travel_noise_sigma: 0.12   # log-normal factor on driving time
+  driver_rest_hours: 8       # after each leg (long legs assume a co-driver; only lead recorded)
+
+lastmile:
+  speed_kmh: 22
+  service_minutes: 4
+  cod_extra_minutes: 2
+  max_stops: 120
+  min_loop_minutes: 60       # do not start a loop with less shift time left than this
+  poll_minutes: 30           # idle rider re-checks for parcels
+  stop_noise_sigma: 0.25
+  reattempt_delay_hours: 18
+  max_attempts: 3
+  fail_prob: {base: 0.08, ambiguous: 0.07, bad: 0.20, cod: 0.04}   # additive
+
+exceptions:                  # EXCEPTION is terminal (ADR 0005)
+  damage_per_unload: 0.0005
+  lost_per_linehaul_leg: 0.0003
+  unresolvable_if_bad_address: 0.25   # per attempt at a 'bad' address, instead of a failure
+
+sla:
+  days: {same_depot: 1, same_region: 2, adjacent_region: 3, far_region: 4}
+  express_days_saved: 1
+  promise_local_time: "21:00"
+
+runner:
+  flush_interval_sim_minutes: 15   # TMS write-behind flush cadence (plus before every checkpoint)
