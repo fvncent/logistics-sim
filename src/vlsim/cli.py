@@ -33,6 +33,24 @@ def _cmd_config_check(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_seed(args: argparse.Namespace) -> int:
+    # Imported here so the engine-side commands never load the TMS database layer.
+    from sqlalchemy import create_engine  # noqa: PLC0415
+
+    from vlsim.tms.seed import seed_world  # noqa: PLC0415
+    from vlsim.tms.settings import tms_dsn  # noqa: PLC0415
+    from vlsim.world.build import build_world  # noqa: PLC0415
+
+    cfg = load_config(_config_dir(), args.preset)
+    world = build_world(cfg)
+    engine = create_engine(tms_dsn())
+    with engine.begin() as conn:
+        written = seed_world(conn, world)
+    engine.dispose()
+    log.info("seed_done", preset=cfg.scale.name, seed=cfg.base.seed, rows_written=written)
+    return 0
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     load_config(_config_dir(), args.preset)
     log.error("engine_not_implemented", detail="the simulation loop lands in M3-M6")
@@ -45,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name, fn, help_ in (
         ("config-check", _cmd_config_check, "validate config and print a summary"),
+        ("seed", _cmd_seed, "upsert deterministic master data into TMS Postgres"),
         ("run", _cmd_run, "run the simulator (not yet implemented)"),
     ):
         p = sub.add_parser(name, help=help_)
