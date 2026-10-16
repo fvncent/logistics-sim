@@ -7,8 +7,10 @@ import os
 import pytest
 from confluent_kafka.admin import AdminClient
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 
 from vlsim.tms import api
+from vlsim.tms.settings import tms_dsn
 
 pytestmark = pytest.mark.integration
 
@@ -18,6 +20,17 @@ def test_tms_health_ok_against_real_postgres() -> None:
     resp = TestClient(api.app).get("/health")
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"status": "ok", "db": "ok"}
+
+
+def test_connected_to_pinned_container_postgres() -> None:
+    """Guards against a native host Postgres answering instead of the container (ADR 0004)."""
+    engine = create_engine(tms_dsn())
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version()")).scalar_one()
+        db = conn.execute(text("SELECT current_database()")).scalar_one()
+    engine.dispose()
+    assert version.startswith("PostgreSQL 17.11 "), version  # pinned in compose.yaml and ci.yml
+    assert db == "tms"
 
 
 @pytest.mark.redpanda
