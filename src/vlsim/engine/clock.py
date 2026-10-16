@@ -7,6 +7,11 @@ from datetime import UTC, datetime, timedelta, timezone
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _MS = timedelta(milliseconds=1)
 
+SECOND_MS = 1_000
+MINUTE_MS = 60 * SECOND_MS
+HOUR_MS = 60 * MINUTE_MS
+DAY_MS = 24 * HOUR_MS
+
 
 def _require_ms(value: object, what: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
@@ -54,3 +59,19 @@ class SimClock:
     def isoformat(self, t_ms: int | None = None) -> str:
         """ISO-8601 with millisecond precision and the explicit offset, e.g. ...12.000+07:00."""
         return self.datetime(t_ms).isoformat(timespec="milliseconds")
+
+
+def local_midnight_ms(t_ms: int, offset_minutes: int) -> int:
+    """Start of the local calendar day containing t_ms."""
+    off = offset_minutes * MINUTE_MS
+    return ((t_ms + off) // DAY_MS) * DAY_MS - off
+
+
+def time_of_day_ms(hour: int, minute: int = 0) -> int:
+    return hour * HOUR_MS + minute * MINUTE_MS
+
+
+def next_local_time_ms(t_ms: int, hour: int, minute: int, offset_minutes: int) -> int:
+    """First instant >= t_ms whose local wall time is hour:minute."""
+    candidate = local_midnight_ms(t_ms, offset_minutes) + time_of_day_ms(hour, minute)
+    return candidate if candidate >= t_ms else candidate + DAY_MS

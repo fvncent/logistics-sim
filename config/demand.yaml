@@ -1,0 +1,29 @@
+# Order demand: non-homogeneous Poisson rate
+#   lambda(t) = shipments_per_day x hour_of_day[h] x day_of_week[d] x season(date)
+# hour_of_day and day_of_week are raw weights, normalized to mean 1 by the loader, so an
+# ordinary week averages scale.shipments_per_day. All shapes and sizes are modelling assumptions.
+hour_of_day: [0.30, 0.20, 0.15, 0.10, 0.10, 0.20, 0.40, 0.70, 1.00, 1.30, 1.40, 1.40,
+              1.30, 1.30, 1.30, 1.30, 1.30, 1.40, 1.50, 1.70, 1.90, 1.90, 1.50, 0.80]
+day_of_week: [1.10, 1.05, 1.00, 1.00, 1.00, 0.95, 0.90]   # Monday .. Sunday
+
+# Seasonal multipliers: piecewise-linear in whole local days around an anchor date
+# ([offset_days, multiplier] points; 1.0 outside). Overlapping events multiply.
+seasonal_events:
+  - name: "11.11"
+    month_day: "11-11"
+    points: [[-7, 1.0], [-1, 1.4], [0, 2.5], [1, 1.6], [3, 1.0]]
+  - name: "12.12"
+    month_day: "12-12"
+    points: [[-5, 1.0], [-1, 1.3], [0, 2.0], [1, 1.4], [3, 1.0]]
+  - name: tet
+    # Lunar New Year day 1 (from memory; verify): pre-Tet surge, then holiday trough.
+    dates: ["2025-01-29", "2026-02-17", "2027-02-06", "2028-01-26", "2029-02-13", "2030-02-03"]
+    points: [[-21, 1.0], [-10, 1.5], [-4, 1.6], [-2, 0.5], [0, 0.2], [4, 0.3], [7, 1.0]]
+
+merchant_zipf_exponent: 1.1   # merchant weight ~ rank^-s, ranked by tier then id (~80/20)
+
+weight_kg: {median: 0.8, sigma: 0.9, min: 0.05, max: 30.0}          # log-normal, grams precision
+cod_value_vnd: {median: 250000, sigma: 0.8, round_to: 1000, min: 10000, max: 20000000}
+
+# Distance class -> share of express orders (service level correlates with distance).
+express_share: {same_depot: 0.25, same_region: 0.20, adjacent_region: 0.12, far_region: 0.08}

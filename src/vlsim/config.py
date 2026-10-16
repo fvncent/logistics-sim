@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+import hashlib
+import json
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -182,6 +184,141 @@ class WorldConfig(_Frozen):
         return self
 
 
+DistanceClass = Literal["same_depot", "same_region", "adjacent_region", "far_region"]
+DISTANCE_CLASSES: tuple[DistanceClass, ...] = (
+    "same_depot",
+    "same_region",
+    "adjacent_region",
+    "far_region",
+)
+
+
+def _normalize(weights: tuple[float, ...]) -> tuple[float, ...]:
+    mean = sum(weights) / len(weights)
+    return tuple(w / mean for w in weights)
+
+
+class SeasonalEvent(_Frozen):
+    name: str
+    month_day: str | None = Field(default=None, pattern=r"^\d{2}-\d{2}$")
+    dates: tuple[date, ...] = ()
+    points: tuple[tuple[int, float], ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def _check(self) -> SeasonalEvent:
+        if (self.month_day is None) == (not self.dates):
+            raise ValueError(f"{self.name}: give exactly one of month_day or dates")
+        offsets = [p[0] for p in self.points]
+        if offsets != sorted(set(offsets)):
+            raise ValueError(f"{self.name}: point offsets must be strictly increasing")
+        if any(m <= 0 for _, m in self.points):
+            raise ValueError(f"{self.name}: multipliers must be > 0")
+        return self
+
+
+class LogNormalSpec(_Frozen):
+    median: float = Field(gt=0)
+    sigma: float = Field(gt=0)
+    min: float = Field(gt=0)
+    max: float = Field(gt=0)
+
+
+class CodValueSpec(_Frozen):
+    median: int = Field(gt=0)
+    sigma: float = Field(gt=0)
+    round_to: int = Field(gt=0)
+    min: int = Field(gt=0)
+    max: int = Field(gt=0)
+
+
+class DemandConfig(_Frozen):
+    hour_of_day: tuple[float, ...] = Field(min_length=24, max_length=24)
+    day_of_week: tuple[float, ...] = Field(min_length=7, max_length=7)
+    seasonal_events: tuple[SeasonalEvent, ...]
+    merchant_zipf_exponent: float = Field(gt=0)
+    weight_kg: LogNormalSpec
+    cod_value_vnd: CodValueSpec
+    express_share: dict[DistanceClass, float]
+
+    @field_validator("hour_of_day", "day_of_week")
+    @classmethod
+    def _norm(cls, v: tuple[float, ...]) -> tuple[float, ...]:
+        if any(w <= 0 for w in v):
+            raise ValueError("curve weights must be > 0")
+        return _normalize(v)
+
+
+class PickupOps(_Frozen):
+    runs: tuple[time, ...] = Field(min_length=1)
+    travel_minutes: int = Field(gt=0)
+
+
+class DockOps(_Frozen):
+    unload_base_minutes: int = Field(ge=0)
+    unload_seconds_per_parcel: int = Field(ge=0)
+    sort_minutes: int = Field(gt=0)
+
+
+class LinehaulOps(_Frozen):
+    departures: dict[LaneKind, tuple[time, ...]]
+    vehicle_types: dict[LaneKind, tuple[VehicleType, ...]]
+    cutoff_minutes: int = Field(ge=0)
+    min_fill_ratio: float = Field(ge=0, le=1)
+    retry_minutes: int = Field(gt=0)
+    max_wait_minutes: int = Field(ge=0)
+    speed_kmh: dict[VehicleType, float]
+    handling_minutes: int = Field(ge=0)
+    travel_noise_sigma: float = Field(ge=0)
+    driver_rest_hours: int = Field(ge=0)
+
+
+class FailProb(_Frozen):
+    base: float = Field(ge=0, le=1)
+    ambiguous: float = Field(ge=0, le=1)
+    bad: float = Field(ge=0, le=1)
+    cod: float = Field(ge=0, le=1)
+
+
+class LastmileOps(_Frozen):
+    speed_kmh: float = Field(gt=0)
+    service_minutes: int = Field(gt=0)
+    cod_extra_minutes: int = Field(ge=0)
+    max_stops: int = Field(gt=0)
+    min_loop_minutes: int = Field(gt=0)
+    poll_minutes: int = Field(gt=0)
+    stop_noise_sigma: float = Field(ge=0)
+    reattempt_delay_hours: int = Field(gt=0)
+    max_attempts: int = Field(ge=1)
+    fail_prob: FailProb
+
+
+class ExceptionRates(_Frozen):
+    damage_per_unload: float = Field(ge=0, le=1)
+    lost_per_linehaul_leg: float = Field(ge=0, le=1)
+    unresolvable_if_bad_address: float = Field(ge=0, le=1)
+
+
+class SlaOps(_Frozen):
+    days: dict[DistanceClass, int]
+    express_days_saved: int = Field(ge=0)
+    promise_local_time: time
+
+
+class RunnerOps(_Frozen):
+    flush_interval_sim_minutes: int = Field(gt=0)
+
+
+class OperationsConfig(_Frozen):
+    carrier_id: str
+    pickup: PickupOps
+    dock: DockOps
+    linehaul: LinehaulOps
+    lastmile: LastmileOps
+    exceptions: ExceptionRates
+    sla: SlaOps
+    runner: RunnerOps
+
+
 class BaseConfig(_Frozen):
     config_version: int
     seed: int = Field(ge=0)
@@ -213,6 +350,15 @@ class SimConfig(_Frozen):
     scale: ScalePreset
     network: Network
     world: WorldConfig
+    demand: DemandConfig
+    operations: OperationsConfig
+
+    def fingerprint(self) -> str:
+        """SHA-256 of the canonical loaded config. Checkpoints refuse to restore on mismatch."""
+        body = json.dumps(
+            self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def _read_yaml(path: Path) -> object:
@@ -235,4 +381,18 @@ def load_config(config_dir: Path = DEFAULT_CONFIG_DIR, preset: str | None = None
     for vtype in scale.vehicles:
         if vtype not in world.vehicle_models:
             raise ValueError(f"no vehicle_models configured for {vtype}")
-    return SimConfig(base=base, scale=scale, network=network, world=world)
+    demand = DemandConfig.model_validate(_read_yaml(config_dir / "demand.yaml"))
+    operations = OperationsConfig.model_validate(_read_yaml(config_dir / "operations.yaml"))
+    if operations.carrier_id not in {c.carrier_id for c in world.carriers}:
+        raise ValueError(f"operations.carrier_id {operations.carrier_id} is not a seeded carrier")
+    provinces = [d.province for d in network.depots]
+    if len(provinces) != len(set(provinces)):
+        raise ValueError("each depot needs a distinct province (addresses map to depots by it)")
+    return SimConfig(
+        base=base,
+        scale=scale,
+        network=network,
+        world=world,
+        demand=demand,
+        operations=operations,
+    )

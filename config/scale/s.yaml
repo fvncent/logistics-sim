@@ -3,8 +3,8 @@
 name: s
 shipments_per_day: 1200
 vehicles:
-  motorbike: 36
-  van: 8
+  motorbike: 32
+  van: 12
   truck: 6
 drivers: 60
 merchants: 200

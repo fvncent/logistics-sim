@@ -41,7 +41,7 @@ addresses:
   wards_per_depot: 30             # synthetic labels "Phường 01".."Phường 30" (not real wards)
   streets_per_ward: 12            # synthetic "Đường số N"
   house_number_max: 400
-  radius_km_sd: {hub: 8.0, depot: 4.0}   # gaussian scatter of customer location around depot
+  radius_km_sd: {hub: 4.0, depot: 2.5}   # gaussian scatter of customer location around depot
   quality_shares: {good: 0.80, ambiguous: 0.15, bad: 0.05}
   street_templates:   # how street_raw is written for each quality class
     good: "{house} {street}"
