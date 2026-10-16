@@ -1,0 +1,10 @@
+# Base simulator settings. Versioned: bump config_version on any change that alters output.
+config_version: 1
+seed: 20261016
+timezone_offset: "+07:00"          # every event_time carries this explicit offset
+start_time: "2026-10-01T00:00:00+07:00"
+scale_preset: s                    # s | m  (file under config/scale/)
+distance:
+  circuity_factor: 1.3             # road distance = haversine x circuity (spec: ~1.3)
+checkpoint:
+  interval_sim_minutes: 60

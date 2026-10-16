@@ -1,0 +1,11 @@
+# Scale M: default 24/7 operation. Spec: ~200 vehicles, ~5,000 shipments/day.
+# The vehicle mix, driver, merchant and customer counts are modelling assumptions (docs/ASSUMPTIONS.md).
+name: m
+shipments_per_day: 5000
+vehicles:
+  motorbike: 150
+  van: 30
+  truck: 20
+drivers: 240
+merchants: 800
+customers: 20000
