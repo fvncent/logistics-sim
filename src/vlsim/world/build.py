@@ -255,3 +255,13 @@ def build_world(cfg: SimConfig) -> World:
     merchants = _build_merchants(cfg)
     customers, addresses = _build_customers_and_addresses(cfg)
     return World(depots, carriers, vehicles, drivers, merchants, customers, addresses)
+
+
+def merchant_depots(cfg: SimConfig, merchant_ids: list[str]) -> dict[str, str]:
+    """Pickup depot per merchant, derived (not stored): split by demand_weight, shuffled."""
+    ids = sorted(merchant_ids)
+    depots = cfg.network.depots
+    per_depot = allocate(len(ids), [d.demand_weight for d in depots])
+    homes = [depot_id(d.code) for d, k in zip(depots, per_depot, strict=True) for _ in range(k)]
+    perm = stream(cfg.base.seed, "world.merchant_depots").permutation(len(ids))
+    return {ids[i]: homes[int(perm[i])] for i in range(len(ids))}
