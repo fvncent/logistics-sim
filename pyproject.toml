@@ -1,0 +1,66 @@
+[project]
+name = "vlsim"
+version = "0.1.0"
+description = "VietLink Express logistics data simulator (data source for a DE platform)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==2.5.4",
+    "fastapi==0.143.3",
+    "uvicorn==0.54.0",
+    "sqlalchemy==2.1.4",
+    "psycopg[binary]==3.3.6",
+    "alembic==1.20.0",
+    "confluent-kafka==2.16.0",
+    "prometheus-client==0.26.0",
+    "structlog==26.1.0",
+    "pydantic==2.14.1",
+    "pyyaml==6.0.3",
+]
+
+[project.scripts]
+vlsim = "vlsim.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.17.1",
+    "mypy==2.4.0",
+    "httpx==0.28.1",
+]
+
+[build-system]
+requires = ["uv_build==0.12.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "DTZ", "PL", "TID"]
+ignore = ["PLR0913", "PLR2004"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.time".msg = "Use the sim clock. Wall clock is only allowed in vlsim.engine.pacing."
+"datetime.datetime.now".msg = "Use the sim clock. Wall clock is only allowed in vlsim.engine.pacing."
+"datetime.datetime.utcnow".msg = "Use the sim clock."
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["yaml", "confluent_kafka.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs a running TMS Postgres (make up, or the CI service container)",
+    "redpanda: needs a running Redpanda broker (make up)",
+]
