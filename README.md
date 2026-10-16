@@ -8,6 +8,8 @@ See [docs/SPEC.md](docs/SPEC.md). Full run instructions and an architecture diag
 
 ```bash
 make up      # Postgres + Redpanda (Compose profile "core")
+make migrate # apply TMS schema (Alembic)
+make seed    # deterministic, idempotent master data (PRESET=s|m)
 make lint
 make test
 make down
