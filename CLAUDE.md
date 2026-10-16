@@ -7,7 +7,7 @@ Source of truth: `docs/SPEC.md`. If a request and the spec disagree, stop and as
 Phase 1 (MVP) only. Out of scope: weather, carrier files, invoice and COD flows (only the tables exist), a real fault injector (pass-through interface only), backfill, sharding, MinIO, Debezium, dbt, any UI.
 
 ## Hard rules
-1. **Sim clock ≠ wall clock.** Handlers never call `datetime.now` or `time.time` (ruff TID251 bans them; the only exception is the live-mode pacer in `vlsim.engine`). Every event carries `event_time` from the sim clock with an explicit `+07:00` offset. Never stamp `ingest_time`.
+1. **Sim clock ≠ wall clock.** No code reads the real clock. Ruff TID251 bans `time.*` clocks and sleep and `datetime.now`/`today`. The single whitelisted file is `src/vlsim/engine/live.py`, the M6 pacer. TMS writes (`created_at`, `updated_at` and the like) take timestamps from the sim clock: never use Postgres `now()` or `server_default=func.now()`. Ruff cannot catch these, so review for them. Every event carries `event_time` from the sim clock with an explicit `+07:00` offset. Never stamp `ingest_time`.
 2. **Determinism.** Same seed + config ⇒ byte-identical output.
    - heapq ordered by `(time, seq)` with a monotonic sequence number.
    - Every component has its own RNG stream, derived from `seed` + a **stable hash of the stream name** (not spawn order).
@@ -34,9 +34,9 @@ Phase 1 (MVP) only. Out of scope: weather, carrier files, invoice and COD flows 
 - Be honest about anything that could not be verified.
 
 ## Commands
-`make up` (core: Postgres :55432, Redpanda :19092) · `make up-sim` · `make down` · `make lint` · `make test` · `make test-integration` · `make soak` · `make reconcile`
+`make up` (core: Postgres :$TMS_PG_PORT, default 55432, Redpanda :19092) · `make up-sim` · `make down` · `make lint` · `make test` · `make test-integration` · `make soak` · `make reconcile`
 
-The host Postgres port is 55432 because a native Postgres may already hold 5432 on the dev Mac. The Makefile finds the Docker Desktop CLI even when it is not on PATH.
+The host Postgres port is 55432 because a native Postgres may already hold 5432 on the dev Mac. Docker must be on PATH (`~/.docker/bin` on macOS). The Makefile keeps a macOS-only fallback with a warning; on Linux, docker targets fail if docker is missing. `make up-sim` fails until the engine exists (M3–M6). EXCEPTION is a terminal state (ADR 0005).
 
 ## Layout
 `src/vlsim/{engine,world,models,tms,emitters,faults,validation}`, `config/`, `migrations/` (M2), `docker/`, `tests/{unit,integration}`.
