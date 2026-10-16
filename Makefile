@@ -1,7 +1,16 @@
-# Docker Desktop on macOS does not always put the CLI on PATH; fall back to the app bundle.
-DOCKER ?= $(shell command -v docker 2>/dev/null || echo /Applications/Docker.app/Contents/Resources/bin/docker)
-export PATH := $(dir $(DOCKER)):$(PATH)
-COMPOSE := $(DOCKER) compose
+# Docker must be on PATH (Docker Desktop on macOS adds ~/.docker/bin via ~/.zprofile).
+# Last-resort fallback for non-login macOS shells only; it never applies on Linux.
+DOCKER := $(shell command -v docker 2>/dev/null)
+ifeq ($(DOCKER),)
+  ifeq ($(shell uname -s),Darwin)
+    DOCKER := /Applications/Docker.app/Contents/Resources/bin/docker
+    export PATH := $(dir $(DOCKER)):$(PATH)
+    $(warning docker not on PATH; falling back to $(DOCKER). Add ~/.docker/bin to PATH.)
+  else
+    DOCKER = $(error docker not found on PATH)
+  endif
+endif
+COMPOSE = $(DOCKER) compose  # recursive: the Linux error fires only for docker targets
 UV ?= uv
 
 .PHONY: help sync up up-sim down clean lint fmt test test-integration soak reconcile
