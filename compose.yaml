@@ -1,0 +1,72 @@
+# Profiles: core = tms-postgres + redpanda; sim = sim-engine + tms-service.
+# All images verified multi-arch (linux/amd64 + linux/arm64) on 2026-10-16.
+name: vlsim
+
+services:
+  tms-postgres:
+    profiles: [core]
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_USER: vlsim
+      POSTGRES_PASSWORD: vlsim
+      POSTGRES_DB: tms
+    ports: ["${TMS_PG_PORT:-55432}:5432"]
+    volumes: [tms-pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vlsim -d tms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redpanda:
+    profiles: [core]
+    image: redpandadata/redpanda:v26.1.18
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --memory=1G
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports: ["${REDPANDA_PORT:-19092}:19092"]
+    volumes: [redpanda-data:/var/lib/redpanda/data]
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  tms-service:
+    profiles: [sim]
+    build: {context: ., dockerfile: docker/Dockerfile}
+    image: vlsim:dev
+    command: ["uvicorn", "vlsim.tms.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
+    ports: ["${TMS_API_PORT:-8000}:8000"]
+    depends_on:
+      tms-postgres: {condition: service_healthy}
+
+  sim-engine:
+    profiles: [sim]
+    image: vlsim:dev
+    command: ["vlsim", "run"]
+    environment:
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
+      VLSIM_KAFKA_BOOTSTRAP: redpanda:9092
+      VLSIM_GROUND_TRUTH_DIR: /groundtruth
+      VLSIM_STATE_DIR: /state
+    volumes:
+      - groundtruth:/groundtruth   # mounted ONLY here; never into Postgres or the platform
+      - sim-state:/state
+    depends_on:
+      tms-postgres: {condition: service_healthy}
+      redpanda: {condition: service_healthy}
+      tms-service: {condition: service_started}
+
+volumes:
+  tms-pgdata:
+  redpanda-data:
+  groundtruth:
+  sim-state:

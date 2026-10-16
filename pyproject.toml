@@ -1,0 +1,90 @@
+[project]
+name = "vlsim"
+version = "0.1.0"
+description = "VietLink Express logistics data simulator (data source for a DE platform)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "numpy==2.5.4",
+    "fastapi==0.143.3",
+    "uvicorn==0.54.0",
+    "sqlalchemy==2.1.4",
+    "psycopg[binary]==3.3.6",
+    "alembic==1.20.0",
+    "confluent-kafka==2.16.0",
+    "prometheus-client==0.26.0",
+    "structlog==26.1.0",
+    "pydantic==2.14.1",
+    "pyyaml==6.0.3",
+]
+
+[project.scripts]
+vlsim = "vlsim.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.17.1",
+    "mypy==2.4.0",
+    "httpx==0.28.1",
+]
+
+[build-system]
+requires = ["uv_build==0.12.13"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "N", "DTZ", "PL", "TID"]
+ignore = ["PLR0913", "PLR2004"]
+
+# Wall clock ban (hard rule 1). Simulated time comes only from the SimClock: handlers, the TMS
+# service layer (status/updated_at timestamps) and emitters must never read the real clock,
+# otherwise same seed + config would stop producing identical output. The single exception is
+# the M6 live runner, which must read and sleep on the wall clock to pace the sim clock
+# (speed knob); it is whitelisted by path in per-file-ignores below and nowhere else.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.time".msg = "Wall clock is banned; use the SimClock (only vlsim/engine/live.py may pace on it)."
+"time.time_ns".msg = "Wall clock is banned; use the SimClock."
+"time.monotonic".msg = "Wall clock is banned; use the SimClock (only vlsim/engine/live.py may pace on it)."
+"time.monotonic_ns".msg = "Wall clock is banned; use the SimClock."
+"time.perf_counter".msg = "Wall clock is banned; use the SimClock."
+"time.perf_counter_ns".msg = "Wall clock is banned; use the SimClock."
+"time.sleep".msg = "Only the live runner (vlsim/engine/live.py) may sleep."
+"time.localtime".msg = "Wall clock is banned; use the SimClock."
+"time.gmtime".msg = "Wall clock is banned; use the SimClock."
+"datetime.datetime.now".msg = "Wall clock is banned; use the SimClock."
+"datetime.datetime.utcnow".msg = "Wall clock is banned; use the SimClock."
+"datetime.datetime.today".msg = "Wall clock is banned; use the SimClock."
+"datetime.date.today".msg = "Wall clock is banned; use the SimClock."
+
+[tool.ruff.lint.per-file-ignores]
+# Live-mode pacer (M6): the one module allowed to read and sleep on the wall clock. See above.
+"src/vlsim/engine/live.py" = ["TID251"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["yaml", "confluent_kafka.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    # Starlette 1.8.0 (via FastAPI 0.143.3) warns that TestClient should use httpx2. We stay on
+    # httpx 0.28.1 by decision (no new dependency); silence only this exact message and class.
+    "ignore:Using `httpx` with `starlette\\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning",
+]
+markers = [
+    "integration: needs a running TMS Postgres (make up, or the CI service container)",
+    "redpanda: needs a running Redpanda broker (make up)",
+]

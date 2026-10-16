@@ -1,0 +1,11 @@
+# Scale S: development and CI. Spec: ~50 vehicles, ~1,200 shipments/day.
+# The vehicle mix, driver, merchant and customer counts are modelling assumptions (docs/ASSUMPTIONS.md).
+name: s
+shipments_per_day: 1200
+vehicles:
+  motorbike: 36
+  van: 8
+  truck: 6
+drivers: 60
+merchants: 200
+customers: 5000
