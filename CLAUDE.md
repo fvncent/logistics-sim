@@ -47,3 +47,9 @@ The host Postgres port is 55432 because a native Postgres may already hold 5432 
 - Only `vlsim.tms` imports SQLAlchemy. A test enforces that `engine`, `models`, `emitters`, `faults` and `world` never import the DB layer.
 - `compose.yaml` is the single source of truth for the Postgres image and the CDC settings (ADR 0006). `tests/compose_info.py` reads it.
 - RNG: `vlsim.engine.rng.stream(seed, name)` gives a named stream keyed by a SHA-256 of the name.
+
+## Engine (M3)
+- Time is int ms since the epoch (`vlsim.engine.clock`). Never use float times.
+- Handlers are module-level functions registered by name: `handler(engine, event)`. They read `engine.clock` and use `engine.rng(name)`, `engine.schedule[_in](t, "name", payload)`, `engine.counters` and `engine.state` (plain data only).
+- Checkpoints are canonical JSON in SQLite with a verified SHA-256 (ADR 0007). Anything that must survive a restart lives in `engine.state`, the queue, the RNG streams or the counters.
+- `tests/unit/engine/test_determinism.py` pins golden hashes. Change them only on purpose, and say why in the commit.
