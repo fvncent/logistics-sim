@@ -12,3 +12,5 @@
 **Consequences.**
 - Moving to HTTP later only needs a second `TmsService` implementation (an HTTP client).
 - The in-process path means the engine container holds DB credentials.
+
+**Update (2026-10-17, M4).** The protocol and its plain row types live in `vlsim.ports`, not in `vlsim.tms`, so engine-side packages can depend on the contract without importing the database layer. The implementation is `vlsim.tms.service.PostgresTms`. Its write semantics are in ADR 0008.

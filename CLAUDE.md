@@ -53,3 +53,11 @@ The host Postgres port is 55432 because a native Postgres may already hold 5432 
 - Handlers are module-level functions registered by name: `handler(engine, event)`. They read `engine.clock` and use `engine.rng(name)`, `engine.schedule[_in](t, "name", payload)`, `engine.counters` and `engine.state` (plain data only).
 - Checkpoints are canonical JSON in SQLite with a verified SHA-256 (ADR 0007). Anything that must survive a restart lives in `engine.state`, the queue, the RNG streams or the counters.
 - `tests/unit/engine/test_determinism.py` pins golden hashes. Change them only on purpose, and say why in the commit.
+
+## Business model (M4)
+- Handlers live in `vlsim.models.flow`; their state layout is documented at the top of that file. `vlsim.models.sim.Simulation` runs them: it flushes and checkpoints on absolute time grids.
+- **Never read mutable entity state from Postgres in a handler.** Use `engine.state` (checkpointed) and `ctx.facts` (immutable, re-read on restore). See ADR 0008.
+- TMS writes are monotonic upserts. A shipment must never get two writes in the same sim millisecond: keep queue readiness checks strict (`<`).
+- Iterate `engine.state` dicts in sorted order only; restored dicts come back sorted.
+- `tests/fakes.InMemoryTms` mirrors `PostgresTms` semantics and validates every transition. Use it for fast tests.
+- `vlsim simulate --preset s --days N` runs a batch against TMS Postgres and resumes from `--state-dir`.
