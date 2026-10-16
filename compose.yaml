@@ -6,6 +6,17 @@ services:
   tms-postgres:
     profiles: [core]
     image: postgres:17.11-bookworm
+    # Logical decoding for future CDC (Debezium, platform side). ADR 0006.
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_slot_wal_keep_size=4GB   # cap WAL kept for an abandoned slot so it cannot fill the disk
     environment:
       POSTGRES_USER: vlsim
       POSTGRES_PASSWORD: vlsim
@@ -41,7 +52,8 @@ services:
     profiles: [sim]
     build: {context: ., dockerfile: docker/Dockerfile}
     image: vlsim:dev
-    command: ["uvicorn", "vlsim.tms.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    # The TMS owns its schema: apply migrations, then serve.
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn vlsim.tms.api:app --host 0.0.0.0 --port 8000"]
     environment:
       VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
     ports: ["${TMS_API_PORT:-8000}:8000"]
