@@ -27,6 +27,15 @@ jobs:
         with:
           version: "0.12.13"
       - run: uv sync --frozen
+      - name: Apply CDC server settings from compose.yaml (service containers take no command)
+        run: |
+          uv run python -m tests.compose_info alter-system \
+            | docker exec -i ${{ job.services.tms-postgres.id }} psql -v ON_ERROR_STOP=1 -U vlsim -d tms
+          docker restart ${{ job.services.tms-postgres.id }}
+          for i in $(seq 1 30); do
+            docker exec ${{ job.services.tms-postgres.id }} pg_isready -U vlsim -d tms && break
+            sleep 2
+          done
       - run: make lint
       - run: make test
       - name: Integration tests (Postgres only; Redpanda joins in M5)

@@ -13,7 +13,7 @@ endif
 COMPOSE = $(DOCKER) compose  # recursive: the Linux error fires only for docker targets
 UV ?= uv
 
-.PHONY: help sync up up-sim down clean lint fmt test test-integration soak reconcile
+.PHONY: help sync up up-sim down clean migrate migrate-down seed lint fmt test test-integration soak reconcile
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -32,6 +32,16 @@ down:
 
 clean:  ## down and delete volumes (TMS data, topics, ground truth, checkpoints)
 	$(COMPOSE) --profile core --profile sim down -v
+
+migrate:  ## apply TMS migrations (needs `make up`)
+	$(UV) run alembic upgrade head
+
+migrate-down:  ## roll the TMS schema back to empty
+	$(UV) run alembic downgrade base
+
+PRESET ?= s
+seed:  ## idempotent master-data seed, e.g. `make seed PRESET=m`
+	$(UV) run vlsim seed --preset $(PRESET)
 
 lint:
 	$(UV) run ruff format --check .

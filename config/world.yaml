@@ -1,0 +1,50 @@
+# Seed-world parameters (master data). Every value is a modelling assumption
+# (docs/ASSUMPTIONS.md); names are fictional.
+
+carriers:   # Phase 3 attaches the planted carrier patterns (SPEC patterns 2 and 5) to B and C.
+  - {carrier_id: CR-01, name: VietLink Fleet,  type: own,     reliability_tier: high}
+  - {carrier_id: CR-02, name: Partner Carrier A, type: partner, reliability_tier: high}
+  - {carrier_id: CR-03, name: Partner Carrier B, type: partner, reliability_tier: medium}
+  - {carrier_id: CR-04, name: Partner Carrier C, type: partner, reliability_tier: medium}
+
+vehicle_models:   # share = fraction of that vehicle type; shares per type sum to 1
+  motorbike:
+    - {model: MB-110, capacity_kg: 60,   share: 0.6}
+    - {model: MB-125, capacity_kg: 80,   share: 0.4}
+  van:
+    - {model: VAN-1T,   capacity_kg: 1000, share: 0.5}
+    - {model: VAN-1.5T, capacity_kg: 1500, share: 0.5}
+  truck:
+    - {model: TRK-5T, capacity_kg: 5000, share: 0.5}
+    - {model: TRK-8T, capacity_kg: 8000, share: 0.5}
+# Trucks are based at hubs only (line-haul); motorbikes and vans at every depot by demand_weight.
+trucks_at_hubs_only: true
+
+drivers:
+  shift_starts: ["06:00", "08:00", "14:00"]   # local time (UTC+7), assigned round-robin per depot
+  shift_hours_limit: 10
+
+merchants:
+  tiers:   # share of merchants; cod_share range is the fraction of that merchant's orders paid COD
+    - {tier: enterprise, share: 0.05, cod_share_min: 0.20, cod_share_max: 0.50}
+    - {tier: mid,        share: 0.20, cod_share_min: 0.40, cod_share_max: 0.70}
+    - {tier: small,      share: 0.75, cod_share_min: 0.60, cod_share_max: 0.95}
+  name_prefixes: [Shop, Store, Mart, Boutique, Trading, Market]
+  created_days_before_start_max: 1095
+
+customers:
+  surnames: [Nguyễn, Trần, Lê, Phạm, Hoàng, Huỳnh, Phan, Vũ, Võ, Đặng, Bùi, Đỗ, Hồ, Ngô, Dương, Lý]
+  created_days_before_start_max: 730
+  second_address_prob: 0.3
+
+addresses:
+  wards_per_depot: 30             # synthetic labels "Phường 01".."Phường 30" (not real wards)
+  streets_per_ward: 12            # synthetic "Đường số N"
+  house_number_max: 400
+  radius_km_sd: {hub: 8.0, depot: 4.0}   # gaussian scatter of customer location around depot
+  quality_shares: {good: 0.80, ambiguous: 0.15, bad: 0.05}
+  street_templates:   # how street_raw is written for each quality class
+    good: "{house} {street}"
+    ambiguous: "{street}"          # no house number
+    bad: "gần {street}"            # landmark-style: "near <street>"
+  coord_decimals: 6

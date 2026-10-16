@@ -1,15 +1,17 @@
 # Depots and lanes. Coordinates are APPROXIMATE (from SPEC.md) and must be verified
-# against a map source before use. dock_doors are modelling assumptions.
+# against a map source before use. dock_doors, demand_weight (share of customers, vehicles and
+# drivers based at the depot) and the post-2025 province names are assumptions; the
+# provinces are from memory and need checking (docs/ASSUMPTIONS.md A7, A12).
 depots:
-  - {code: HAN, name: Hanoi Hub,       type: hub,   lat: 21.03, lon: 105.85, region: north,   dock_doors: 12}
-  - {code: HPH, name: Hai Phong Depot, type: depot, lat: 20.86, lon: 106.68, region: north,   dock_doors: 4}
-  - {code: VII, name: Vinh Depot,      type: depot, lat: 18.68, lon: 105.68, region: north,   dock_doors: 4}
-  - {code: DAD, name: Da Nang Hub,     type: hub,   lat: 16.05, lon: 108.20, region: central, dock_doors: 10}
-  - {code: HUI, name: Hue Depot,       type: depot, lat: 16.46, lon: 107.59, region: central, dock_doors: 4}
-  - {code: NHA, name: Nha Trang Depot, type: depot, lat: 12.24, lon: 109.19, region: central, dock_doors: 4}
-  - {code: SGN, name: Ho Chi Minh City Hub, type: hub, lat: 10.78, lon: 106.70, region: south, dock_doors: 14}
-  - {code: BHA, name: Bien Hoa Depot,  type: depot, lat: 10.95, lon: 106.82, region: south,   dock_doors: 4}
-  - {code: VCA, name: Can Tho Depot,   type: depot, lat: 10.03, lon: 105.78, region: south,   dock_doors: 4}
+  - {code: HAN, name: Hanoi Hub,       type: hub,   lat: 21.03, lon: 105.85, region: north,   dock_doors: 12, province: Hà Nội, demand_weight: 3}
+  - {code: HPH, name: Hai Phong Depot, type: depot, lat: 20.86, lon: 106.68, region: north,   dock_doors: 4, province: Hải Phòng, demand_weight: 1}
+  - {code: VII, name: Vinh Depot,      type: depot, lat: 18.68, lon: 105.68, region: north,   dock_doors: 4, province: Nghệ An, demand_weight: 1}
+  - {code: DAD, name: Da Nang Hub,     type: hub,   lat: 16.05, lon: 108.20, region: central, dock_doors: 10, province: Đà Nẵng, demand_weight: 2}
+  - {code: HUI, name: Hue Depot,       type: depot, lat: 16.46, lon: 107.59, region: central, dock_doors: 4, province: Huế, demand_weight: 1}
+  - {code: NHA, name: Nha Trang Depot, type: depot, lat: 12.24, lon: 109.19, region: central, dock_doors: 4, province: Khánh Hòa, demand_weight: 1}
+  - {code: SGN, name: Ho Chi Minh City Hub, type: hub, lat: 10.78, lon: 106.70, region: south, dock_doors: 14, province: Hồ Chí Minh, demand_weight: 3}
+  - {code: BHA, name: Bien Hoa Depot,  type: depot, lat: 10.95, lon: 106.82, region: south,   dock_doors: 4, province: Đồng Nai, demand_weight: 1}
+  - {code: VCA, name: Can Tho Depot,   type: depot, lat: 10.03, lon: 105.78, region: south,   dock_doors: 4, province: Cần Thơ, demand_weight: 1}
 
 # Lanes are undirected: each runs in both directions (assumption; the spec draws feeders one way).
 # kind: main = hub-hub trunk, direct = rare slow hub-hub, feeder = depot-hub.

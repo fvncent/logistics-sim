@@ -34,9 +34,16 @@ Phase 1 (MVP) only. Out of scope: weather, carrier files, invoice and COD flows 
 - Be honest about anything that could not be verified.
 
 ## Commands
-`make up` (core: Postgres :$TMS_PG_PORT, default 55432, Redpanda :19092) · `make up-sim` · `make down` · `make lint` · `make test` · `make test-integration` · `make soak` · `make reconcile`
+`make up` (core: Postgres :$TMS_PG_PORT, default 55432, Redpanda :19092) · `make migrate` / `make migrate-down` · `make seed PRESET=s` · `make up-sim` · `make down` · `make lint` · `make test` · `make test-integration` · `make soak` · `make reconcile`
 
 The host Postgres port is 55432 because a native Postgres may already hold 5432 on the dev Mac. Docker must be on PATH (`~/.docker/bin` on macOS). The Makefile keeps a macOS-only fallback with a warning; on Linux, docker targets fail if docker is missing. `make up-sim` fails until the engine exists (M3–M6). EXCEPTION is a terminal state (ADR 0005).
 
 ## Layout
-`src/vlsim/{engine,world,models,tms,emitters,faults,validation}`, `config/`, `migrations/` (M2), `docker/`, `tests/{unit,integration}`.
+`src/vlsim/{engine,world,models,tms,emitters,faults,validation}`, `config/`, `migrations/`, `docker/`, `tests/{unit,integration}`.
+
+## Database
+- `vlsim.tms.schema` (SQLAlchemy Core) is the schema; migrations are hand-reviewed and **frozen once merged**, so changes go in new revisions. A test checks that the migrations and the metadata do not drift.
+- Never use server defaults or DB clock functions. `tests/unit/test_static_rules.py` scans the migrations, the TMS layer and the world builders.
+- Only `vlsim.tms` imports SQLAlchemy. A test enforces that `engine`, `models`, `emitters`, `faults` and `world` never import the DB layer.
+- `compose.yaml` is the single source of truth for the Postgres image and the CDC settings (ADR 0006). `tests/compose_info.py` reads it.
+- RNG: `vlsim.engine.rng.stream(seed, name)` gives a named stream keyed by a SHA-256 of the name.
