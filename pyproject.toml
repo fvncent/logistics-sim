@@ -65,6 +65,8 @@ ignore = ["PLR0913", "PLR2004"]
 [tool.ruff.lint.per-file-ignores]
 # Live-mode pacer (M6): the one module allowed to read and sleep on the wall clock. See above.
 "src/vlsim/engine/live.py" = ["TID251"]
+# Frozen migrations keep long generated CHECK expressions on one line.
+"migrations/versions/*.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"
