@@ -201,7 +201,8 @@ def run_live(
     if server is not None:
         server.stop()
     log.info("live_stopped", sim_time=sim.engine.clock.isoformat(),
-             events=sim.engine.events_processed, checkpoints=sim.checkpoints_saved)  # fmt: skip
+             events=sim.engine.events_processed, checkpoints=sim.checkpoints_saved,
+             emitter=dict(getattr(sink, "stats", {})))  # fmt: skip
     return 0
 
 

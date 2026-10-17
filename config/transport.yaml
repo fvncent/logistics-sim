@@ -6,7 +6,11 @@ topics:
 
 producer:                   # confluent-kafka / librdkafka settings
   acks: all
-  enable.idempotence: true
+  # Idempotence OFF (2026-10-17): after a Redpanda pause the idempotent producer's epoch bump
+  # led to a message being acknowledged but never stored (found by the M6 soak; ADR 0010).
+  # Duplicates from retries are fine: everything is deduplicated on event_id downstream.
+  enable.idempotence: false
+  retries: 2147483647
   linger.ms: 50
   compression.type: lz4
   message.timeout.ms: 30000
