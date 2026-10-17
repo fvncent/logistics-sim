@@ -56,6 +56,8 @@ These are my assumptions, not measured data. Each one lives in config where poss
 | A50 | Live mode runs every day continuously from the configured start; there is no calendar catch-up to the real date. The speed knob ranges from 1x to 1000x. `vlsim run` seeds master data idempotently at startup. | `vlsim.runtime` | M6 |
 | A51 | Health: `degraded` means Redpanda is unreachable **or** the producer is spilling; the spec phrased it as "unreachable and spilling", and either condition alone already means events are not flowing normally. `failing` means Postgres is unreachable or flushes are failing. | `vlsim.ops.health` | M6 |
 | A52 | The soak defaults to 60x (`SOAK_SPEED`): 24 wall hours cover about 60 sim days, including the run-up to 11.11, instead of 1 sim day at 1x. Set `SOAK_SPEED=1` for a real-time soak. | `scripts/soak.sh` | M6 |
+| A53 | Server memory budget: Postgres 2 GiB, Redpanda 1.5 GiB, tms-service 256 MiB, sim-engine 480 MiB, about 4.2 GiB of 16 GiB in total, leaving room for the data platform's own profiles. | `compose.yaml` | deploy |
+| A54 | Producer `max.in.flight.requests.per.connection = 1` keeps per-partition order across librdkafka retries now that idempotence is off; measured at no throughput cost (S week 65.6 s vs 66.5 s). | `config/transport.yaml` | deploy |
 
 ## Known baseline artifacts (unplanted effects)
 

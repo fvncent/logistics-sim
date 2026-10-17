@@ -20,7 +20,7 @@ Fast mode (`vlsim simulate --days 7`, fresh DB, Postgres + ground truth + Redpan
 | **S** | 24,769 | 1,012,454 (57,114 + 955,340) | 98,458 | **66.5 s** | **15.2k/s** | 130 MB | 22 MB |
 | **M** | 101,977 | 3,093,057 (242,430 + 2,850,627) | 417,956 | **239.8 s** | **12.9k/s** | 180 MB | 54 MB |
 
-S got slower than M5's 57.8 s because day files are now gzipped at checkpoints. GPS volume: S settles at about 140k pings per sim day and M at about 410k (SPEC estimates: 220k and 860k, A45).
+S got slower than M5's 57.8 s because day files are now gzipped at checkpoints. With `max.in.flight.requests.per.connection=1` (deploy branch) S took **65.6 s** (127 MB RSS), so the ordering setting costs no measurable throughput. GPS volume: S settles at about 140k pings per sim day and M at about 410k (SPEC estimates: 220k and 860k, A45).
 
 **Ground truth on disk per sim day (gzipped, steady state from day 5 on):**
 
@@ -45,6 +45,7 @@ At 1x, S needs 1.7 events/s and M 5.1/s. Live mode is idle almost all the time.
 | Date | Run | Result |
 |---|---|---|
 | 2026-10-17 | `SOAK_HOURS=0.1 SOAK_SPEED=60` (6 min, sim 00:00–05:16 only, light night traffic) | First attempt **FAILED reconcile: 1 scan acknowledged but lost** after the Redpanda pause, which led to idempotence being disabled (ADR 0010 update). Rerun: PASS (50 of 50 events, 6 duplicates) |
+| 2026-10-17 | `SOAK_MODE=container SOAK_HOURS=0.1 SOAK_SPEED=1000` (server stack: compose.yaml + compose.server.yaml, durable Redpanda, limits on, dev Mac) | **PASS**: host-side SIGKILL, restart policy back healthy in 10 s; 40 s Redpanda pause (8 MB spill, drained); SIGTERM exit 0; not OOM-killed; 460,083 events, **0 missing**, 40,220 duplicates; peak sim-engine RSS **194 MB (during the outage)** of the 480 MiB limit |
 | 2026-10-17 | `SOAK_HOURS=0.1 SOAK_SPEED=1000` (6 min ≈ 4 sim days) | **PASS**: kill -9 + restart and a 45 s Redpanda pause; 477,895 events, 192,810 spilled and re-sent, 34,839 delivery failures, **0 missing**, 74,839 duplicates deduplicated, 0 status mismatches; max RSS 136 MB |
 
 S scale produces about 3.5k engine events per sim day (GPS pings are not engine events). At 1000x live speed that is about 40 engine events/s. Including GPS, S emits about 145k events per sim day: about 1.7 events/s at 1x, and about 1,700/s at 1000x, about 10% of the measured 17.5k/s ceiling. The emit path costs about 35 µs per event (JSON, UUIDv5, ground-truth write, produce). Profile it before trying M at 1000x. Not measured yet: M scale, and the amd64 Ubuntu server.
