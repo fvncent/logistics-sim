@@ -11,10 +11,15 @@ producer:                   # confluent-kafka / librdkafka settings
   # Duplicates from retries are fine: everything is deduplicated on event_id downstream.
   enable.idempotence: false
   retries: 2147483647
+  # With idempotence off, librdkafka's default (1,000,000 in flight) would let a retried batch
+  # land behind a newer one in the same partition. 1 keeps per-partition order across retries;
+  # only the spill path (outages) can reorder (ADR 0010, baseline artifact B4).
+  max.in.flight.requests.per.connection: 1
   linger.ms: 50
   compression.type: lz4
   message.timeout.ms: 30000
   queue.buffering.max.messages: 500000
+  queue.buffering.max.kbytes: 131072   # 128 MiB (librdkafka default 1 GiB > sim-engine's 480 MiB limit)
 
 emitter:
   max_inflight: 200000      # unacknowledged messages held in memory; beyond this, spill to disk
