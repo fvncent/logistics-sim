@@ -49,6 +49,6 @@ def test_cdc_server_settings_match_compose() -> None:
 
 @pytest.mark.redpanda
 def test_redpanda_reachable() -> None:
-    bootstrap = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+    bootstrap = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "127.0.0.1:19092")
     meta = AdminClient({"bootstrap.servers": bootstrap}).list_topics(timeout=10)
     assert len(meta.brokers) >= 1

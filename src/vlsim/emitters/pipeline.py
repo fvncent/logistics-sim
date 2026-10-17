@@ -88,7 +88,11 @@ class EmitPipeline:
             payload = line if out_event is event else encode(out_event)
             self.sink.emit(topic, out_key, payload.encode("utf-8"))
 
-    def checkpoint(self) -> dict[str, Any]:
+    def checkpoint(self, sim_now_ms: int) -> dict[str, Any]:
+        """Seal completed days, fsync, and return the ground-truth watermark + spill cursor.
+        Every event up to `sim_now_ms` has been released, so days before today are complete."""
+        today = ms_to_datetime(sim_now_ms, self.offset_minutes).date().isoformat()
+        self.gt.seal_before(today)
         return {"ground_truth": self.gt.watermark(), "sink": self.sink.checkpoint()}
 
     def restore(self, state: dict[str, Any]) -> None:

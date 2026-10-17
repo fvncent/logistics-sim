@@ -13,5 +13,7 @@ COPY config ./config
 COPY alembic.ini ./
 COPY migrations ./migrations
 RUN uv sync --frozen --no-dev
-RUN useradd --create-home --uid 10001 vlsim
+RUN useradd --create-home --uid 10001 vlsim \
+    && mkdir -p /state /groundtruth && chown vlsim:vlsim /state /groundtruth
+# Named volumes inherit this ownership when first created.
 USER vlsim

@@ -10,10 +10,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 
-from tests.integration.conftest import ROOT, ScratchDatabases, seeded
+from tests.integration.conftest import ROOT, ScratchDatabases, dump, seeded
+from tests.unit.emitters.fake_broker import FakeProducer
 from vlsim.config import SimConfig, TransportConfig, load_config, load_transport
+from vlsim.emitters.ground_truth import GroundTruthWriter
 from vlsim.emitters.kafka import SpillingEmitter
+from vlsim.emitters.pipeline import EmitPipeline
+from vlsim.engine.checkpoint import CheckpointStore
 from vlsim.engine.clock import DAY_MS, HOUR_MS, ms_from_datetime
 from vlsim.models.sim import Simulation
 from vlsim.runtime import open_simulation
@@ -21,7 +26,8 @@ from vlsim.tms.service import PostgresTms
 from vlsim.validation.reconcile import reconcile
 
 pytestmark = [pytest.mark.integration, pytest.mark.redpanda]
-BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "127.0.0.1:19092")
+TOPICS = ("tracking.scans", "telemetry.gps")
 
 
 def _docker() -> str:
@@ -127,3 +133,67 @@ def test_hard_crash_and_resume_still_reconciles(
     report = reconcile(tmp_path / "gt" / "crash", BOOTSTRAP, db)
     assert report["ok"], report
     assert report["topics"]["tracking.scans"]["duplicates_in_topic"] > 0  # replayed hours
+
+
+def test_kill_before_first_checkpoint_restarts_run_and_reconciles(
+    cfg: SimConfig, scratch_dbs: ScratchDatabases, tmp_path: Path
+) -> None:
+    """Killed before its first checkpoint, with leftovers everywhere: ground-truth lines on disk,
+    events in the topic, committed Postgres rows, and later writes that never committed. The
+    restart must not refuse the run; it must end byte-identical (ground truth) and row-identical
+    (Postgres) to an uninterrupted run, and reconcile."""
+    end = _start(cfg) + 18 * HOUR_MS  # first trips leave after the 10:00 pickup is sorted
+    ref_db = seeded(scratch_dbs.create("vlsim_early_ref"), cfg)
+    ref_root = tmp_path / "ref"
+    ref_pipeline = EmitPipeline(
+        cfg, 420, GroundTruthWriter(ref_root / "gt"),
+        SpillingEmitter(FakeProducer(), ref_root / "spill.jsonl", load_transport().emitter),
+    )  # fmt: skip
+    ref = Simulation.fresh(
+        cfg, PostgresTms(ref_db), CheckpointStore(ref_root / "c.sqlite"), ref_pipeline
+    )
+    ref.run_until(end)
+    ref.close()
+
+    db = seeded(scratch_dbs.create("vlsim_early_kill"), cfg)
+    first = _open(cfg, db, tmp_path, "early", load_transport())
+    first.engine.run(until_ms=_start(cfg) + 40 * 60_000)  # 40 sim-min: no checkpoint yet
+    first.flush_outputs()  # ground truth, topic and Postgres now hold early events ...
+    _sink(first).producer.flush(10)
+    assert first.pipeline is not None
+    first.pipeline.gt.sync()  # ... and those ground-truth lines reached the disk
+    first.engine.run(until_ms=_start(cfg) + 55 * 60_000)  # ... and 15 more sim-min stay unflushed
+    tms = first.engine.ctx.tms
+    assert isinstance(tms, PostgresTms) and tms.pending() > 0
+    tms.discard_buffer()  # lost with the process: Postgres keeps only the partial, older rows
+    run_dir = tmp_path / "gt" / "early"
+    leftover_lines = sum(len(GroundTruthWriter(run_dir).read_lines(t)) for t in TOPICS)
+    leftover_rows = _count(db, "shipments")
+    assert leftover_lines > 0 and leftover_rows > 0, (leftover_lines, leftover_rows)
+    assert leftover_rows < first.engine.state["seq"]["order"]  # partial: newest rows missing
+    del first  # killed before any checkpoint
+
+    again = _open(cfg, db, tmp_path, "early", load_transport())  # must not refuse the run dir
+    assert again.engine.clock.now_ms == _start(cfg)
+    assert sum(len(GroundTruthWriter(run_dir).read_lines(t)) for t in TOPICS) == 0  # reset
+    again.run_until(end)
+    again.close()
+
+    for topic in TOPICS:
+        ref_files = sorted(p.name for p in (ref_root / "gt" / topic).glob("*"))
+        assert ref_files, topic
+        assert ref_files == sorted(p.name for p in (run_dir / topic).glob("*"))
+        for name in ref_files:
+            assert (run_dir / topic / name).read_bytes() == (
+                ref_root / "gt" / topic / name
+            ).read_bytes()
+    assert dump(db) == dump(ref_db)
+    report = reconcile(run_dir, BOOTSTRAP, db)
+    assert report["ok"], report
+    assert report["topics"]["tracking.scans"]["duplicates_in_topic"] > 0
+
+
+def _count(db: Any, table: str) -> int:
+    with db.connect() as conn:
+        n: int = conn.execute(text(f"SELECT count(*) FROM {table}")).scalar_one()
+    return n

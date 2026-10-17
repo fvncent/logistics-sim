@@ -15,6 +15,7 @@ from typing import Any
 from confluent_kafka import Consumer, TopicPartition
 from sqlalchemy import Engine, text
 
+from vlsim.emitters.ground_truth import open_lines
 from vlsim.emitters.run import load_run
 
 
@@ -22,8 +23,9 @@ def ground_truth_ids(run_dir: Path, topic: str) -> tuple[list[str], dict[str, st
     """All event_ids in file order, and (for scans) the last event_type per shipment."""
     ids: list[str] = []
     last_status: dict[str, str] = {}
-    for f in sorted((run_dir / topic).glob("*.jsonl")):
-        with f.open(encoding="utf-8") as fh:
+    files = [p for p in (run_dir / topic).glob("*") if p.name.endswith((".jsonl", ".jsonl.gz"))]
+    for f in sorted(files, key=lambda p: p.name.split(".")[0]):
+        with open_lines(f) as fh:
             for line in fh:
                 ev = json.loads(line)
                 ids.append(ev["event_id"])

@@ -68,3 +68,17 @@ The host Postgres port is 55432 because a native Postgres may already hold 5432 
 - `config/emitters.yaml` is fingerprinted. `config/transport.yaml` (partitions, retention, producer, spill) is not (ADR 0010).
 - `vlsim topics`, `vlsim simulate --run-id X`, `vlsim reconcile --run-id X` (or `make reconcile RUN=X`). Reconcile only after a clean stop.
 - Integration tests marked `redpanda` need `make up`. The pause test runs `docker compose pause redpanda`.
+
+## Operations (M6)
+- Live: `vlsim run --speed N` (1–1000). `engine/live.py` holds the Pacer, WallClockFlush and LiveRunner, and is the only wall-clock reader. `vlsim.ops` holds metrics, health and the :8081 HTTP endpoint (`/metrics`, `/health`, `/speed`).
+- SIGTERM leads to `Simulation.close()` and exit 0. Restarts resume from `--state-dir`. kill -9 is safe (replay).
+- Ground-truth days before today are gzipped at checkpoints. `truncate_to` copes with seals, unseals and half-done seals.
+- Reproducibility goldens are kept per `<OS>-<arch>` in `tests/golden/repro_hashes.json`. Regenerate with `uv run python -m tests.repro_run` only for intended model changes, and say so in the commit.
+- `make soak` (`scripts/soak.sh`, in bash because it must sleep and read the clock) writes `data/soak/<run>/samples.csv`, `events.log` and `reconcile.json`.
+- Unplanted baseline artifacts are listed in ASSUMPTIONS ("Known baseline artifacts"). Keep the list current when the model changes.
+
+## Deployment
+- Three Compose files: `compose.yaml` (base), `compose.server.yaml` (prod Redpanda, secrets) and `compose.server-data.yaml` (bind mounts), selected via `COMPOSE_FILE` in `.env` (ADR 0013). Never commit `.env`.
+- `tests/unit/test_deploy_config.py` pins the invariants: restart policy, memory limits (sim-engine < 512 MB), log rotation, ports on `BIND_ADDR`, no secrets, durable Redpanda.
+- `make soak SOAK_MODE=container` soaks the real server stack as the isolated project `vlsimsoak`. `make clean-scratch` drops `vlsim_*` databases.
+- `docker kill` does not trigger restart policies. Crash tests use a host-side SIGKILL.

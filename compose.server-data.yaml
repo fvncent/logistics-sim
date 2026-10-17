@@ -1,0 +1,16 @@
+# Server data placement: bind the four volumes to directories on the big disk (DATA_ROOT).
+# Owners (create once, see README "Deploy"): postgres -> chowned by its image at first start;
+# redpanda -> 101:101; groundtruth and state -> 10001:10001 (the vlsim user in our image).
+volumes:
+  tms-pgdata:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DATA_ROOT:?set DATA_ROOT in .env}/postgres"}
+  redpanda-data:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DATA_ROOT:?}/redpanda"}
+  groundtruth:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DATA_ROOT:?}/groundtruth"}
+  sim-state:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${DATA_ROOT:?}/state"}

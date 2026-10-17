@@ -116,9 +116,28 @@ def _cmd_reconcile(args: argparse.Namespace) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    load_config(_config_dir(), args.preset)
-    log.error("engine_not_implemented", detail="the simulation loop lands in M3-M6")
-    return 2
+    """Live mode: paced by the speed knob, resumable, stops cleanly on SIGTERM/SIGINT."""
+    from vlsim.config import load_transport  # noqa: PLC0415
+    from vlsim.engine.clock import DAY_MS, ms_from_datetime  # noqa: PLC0415
+    from vlsim.runtime import run_live  # noqa: PLC0415
+    from vlsim.tms.settings import tms_dsn  # noqa: PLC0415
+
+    cfg = load_config(_config_dir(), args.preset)
+    stop_at = None
+    if args.stop_at_sim_days is not None:
+        stop_at = ms_from_datetime(cfg.base.start_time) + int(args.stop_at_sim_days * DAY_MS)
+    return run_live(
+        cfg,
+        db_url=tms_dsn(),
+        state_dir=Path(args.state_dir),
+        transport=load_transport(_config_dir()),
+        bootstrap=None if args.no_emit else args.bootstrap,
+        ground_truth_root=Path(args.ground_truth_dir),
+        run_id=args.run_id,
+        speed=args.speed,
+        stop_at_ms=stop_at,
+        http_port=None if args.http_port < 0 else args.http_port,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,24 +150,43 @@ def main(argv: list[str] | None = None) -> int:
         ("simulate", _cmd_simulate, "batch-run N sim days against TMS Postgres (resumes)"),
         ("topics", _cmd_topics, "create/align Redpanda topics (partitions, retention)"),
         ("reconcile", _cmd_reconcile, "compare ground truth with Redpanda and Postgres"),
-        ("run", _cmd_run, "run the simulator live (not yet implemented)"),
+        ("run", _cmd_run, "run live: paced 1x-1000x, resumable, SIGTERM-safe"),
     ):
         p = sub.add_parser(name, help=help_)
-        p.add_argument("--preset", default=None, help="scale preset (overrides base.yaml)")
-        if name in ("simulate", "topics", "reconcile"):
+        p.add_argument(
+            "--preset",
+            default=os.environ.get("VLSIM_PRESET") or None,
+            help="scale preset (default: $VLSIM_PRESET, else base.yaml)",
+        )
+        if name in ("simulate", "topics", "reconcile", "run"):
             p.add_argument(
-                "--bootstrap", default=os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+                "--bootstrap", default=os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "127.0.0.1:19092")
             )
-        if name in ("simulate", "reconcile"):
+        if name in ("simulate", "reconcile", "run"):
             p.add_argument("--run-id", default=os.environ.get("VLSIM_RUN_ID", "default"))
             p.add_argument(
                 "--ground-truth-dir",
                 default=os.environ.get("VLSIM_GROUND_TRUTH_DIR", "data/groundtruth"),
             )
-        if name == "simulate":
-            p.add_argument("--days", type=float, default=7.0)
+        if name in ("simulate", "run"):
             p.add_argument("--state-dir", default=os.environ.get("VLSIM_STATE_DIR", "data/state"))
             p.add_argument("--no-emit", action="store_true", help="skip ground truth and topics")
+        if name == "simulate":
+            p.add_argument("--days", type=float, default=7.0)
+        if name == "run":
+            p.add_argument("--speed", type=float, default=float(os.environ.get("VLSIM_SPEED", "1")))
+            p.add_argument(
+                "--stop-at-sim-days",
+                type=float,
+                default=None,
+                help="stop cleanly at config start + N sim days (default: run forever)",
+            )
+            p.add_argument(
+                "--http-port",
+                type=int,
+                default=int(os.environ.get("VLSIM_HTTP_PORT", "8081")),
+                help="metrics/health/speed port; -1 disables",
+            )
         p.set_defaults(func=fn)
     args = parser.parse_args(argv)
     configure_logging(args.log_level)

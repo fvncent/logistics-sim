@@ -1,11 +1,20 @@
 # Profiles: core = tms-postgres + redpanda; sim = sim-engine + tms-service.
 # All images verified multi-arch (linux/amd64 + linux/arm64) on 2026-10-16.
+# Dev defaults live here; the server adds compose.server.yaml (see README "Deploy").
 name: vlsim
+
+x-logging: &logging            # Docker log rotation: at most 5 x 20 MB per container
+  driver: json-file
+  options: {max-size: 20m, max-file: "5"}
 
 services:
   tms-postgres:
     profiles: [core]
     image: postgres:17.11-bookworm
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 2g
+    memswap_limit: 2g
     # Logical decoding for future CDC (Debezium, platform side). ADR 0006.
     command:
       - postgres
@@ -19,9 +28,9 @@ services:
       - max_slot_wal_keep_size=4GB   # cap WAL kept for an abandoned slot so it cannot fill the disk
     environment:
       POSTGRES_USER: vlsim
-      POSTGRES_PASSWORD: vlsim
+      POSTGRES_PASSWORD: ${TMS_PG_PASSWORD:-vlsim}   # dev default; the server requires .env
       POSTGRES_DB: tms
-    ports: ["${TMS_PG_PORT:-55432}:5432"]
+    ports: ["${BIND_ADDR:-127.0.0.1}:${TMS_PG_PORT:-55432}:5432"]
     volumes: [tms-pgdata:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U vlsim -d tms"]
@@ -32,15 +41,19 @@ services:
   redpanda:
     profiles: [core]
     image: redpandadata/redpanda:v26.1.18
-    command:
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 1536m               # Seastar gets --memory=1G; the rest is overhead headroom
+    memswap_limit: 1536m
+    command:                       # dev: no fsync (dev-container); the server overrides this
       - redpanda
       - start
       - --mode=dev-container
       - --smp=1
       - --memory=1G
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
-    ports: ["${REDPANDA_PORT:-19092}:19092"]
+      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-127.0.0.1}:${REDPANDA_PORT:-19092}
+    ports: ["${BIND_ADDR:-127.0.0.1}:${REDPANDA_PORT:-19092}:19092"]
     volumes: [redpanda-data:/var/lib/redpanda/data]
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
@@ -51,31 +64,56 @@ services:
   tms-service:
     profiles: [sim]
     build: {context: ., dockerfile: docker/Dockerfile}
-    image: vlsim:dev
+    image: vlsim:${VLSIM_IMAGE_TAG:-dev}
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 256m
+    memswap_limit: 256m
     # The TMS owns its schema: apply migrations, then serve.
     command: ["sh", "-c", "alembic upgrade head && exec uvicorn vlsim.tms.api:app --host 0.0.0.0 --port 8000"]
     environment:
-      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
-    ports: ["${TMS_API_PORT:-8000}:8000"]
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:${TMS_PG_PASSWORD:-vlsim}@tms-postgres:5432/tms
+    ports: ["${BIND_ADDR:-127.0.0.1}:${TMS_API_PORT:-8000}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       tms-postgres: {condition: service_healthy}
 
   sim-engine:
     profiles: [sim]
-    image: vlsim:dev
-    command: ["vlsim", "run"]
+    image: vlsim:${VLSIM_IMAGE_TAG:-dev}
+    restart: unless-stopped        # a crash (or OOM kill) restarts and resumes from /state
+    logging: *logging
+    mem_limit: 480m                # measured peak RSS: S 130 MB, M 180 MB (BENCHMARKS)
+    memswap_limit: 480m
+    command: ["vlsim", "run"]      # live mode; resumes from /state; SIGTERM-safe
+    stop_grace_period: 2m          # time for the final flush + checkpoint on `docker stop`
     environment:
-      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:${TMS_PG_PASSWORD:-vlsim}@tms-postgres:5432/tms
       VLSIM_KAFKA_BOOTSTRAP: redpanda:9092
       VLSIM_GROUND_TRUTH_DIR: /groundtruth
       VLSIM_STATE_DIR: /state
+      VLSIM_SPEED: ${VLSIM_SPEED:-1}
+      VLSIM_PRESET: ${VLSIM_PRESET:-s}
+      VLSIM_RUN_ID: ${VLSIM_RUN_ID:-default}
+      VLSIM_HTTP_PORT: "8081"
+    ports: ["${BIND_ADDR:-127.0.0.1}:${SIM_HTTP_PORT:-8081}:8081"]   # /metrics /health /speed
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 60s
     volumes:
       - groundtruth:/groundtruth   # mounted ONLY here; never into Postgres or the platform
       - sim-state:/state
     depends_on:
       tms-postgres: {condition: service_healthy}
       redpanda: {condition: service_healthy}
-      tms-service: {condition: service_started}
+      tms-service: {condition: service_healthy}    # it applies the migrations
 
 volumes:
   tms-pgdata:

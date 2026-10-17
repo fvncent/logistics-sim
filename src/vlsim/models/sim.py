@@ -61,6 +61,10 @@ class Simulation:
         self.flush_ms = cfg.operations.runner.flush_interval_sim_minutes * MINUTE_MS
         self.checkpoint_ms = cfg.base.checkpoint.interval_sim_minutes * MINUTE_MS
         self.flush_policy: FlushPolicy = flush_policy or SimTimeFlush(self.flush_ms)
+        self._checkpoint_pending = False
+        self.checkpoints_saved = 0
+        self.last_checkpoint_ms = engine.clock.now_ms
+        self.last_flush_ms = engine.clock.now_ms
 
     @classmethod
     def fresh(
@@ -152,6 +156,7 @@ class Simulation:
         else:
             self.engine.ctx.outbox.release(now)  # no emitters configured: discard
         self.flush_policy.flushed(now)
+        self.last_flush_ms = now
 
     def flush_if_due(self) -> bool:
         if self.flush_policy.due(self.engine.clock.now_ms):
@@ -164,11 +169,42 @@ class Simulation:
         self.flush_outputs()
         if self.store is None:
             return
-        emitters = self.pipeline.checkpoint() if self.pipeline is not None else None
+        now = self.engine.clock.now_ms
+        emitters = self.pipeline.checkpoint(now) if self.pipeline is not None else None
         data = self.engine.to_checkpoint()
         if emitters is not None:
             data["emitters"] = emitters  # ground-truth watermark + spill cursor
         self.store.save(data)
+        self.checkpoints_saved += 1
+        self.last_checkpoint_ms = now
+
+    # --- live mode (driven by vlsim.engine.live.LiveRunner) ------------------------------------
+    def now_ms(self) -> int:
+        return self.engine.clock.now_ms
+
+    def next_stop_ms(self) -> int | None:
+        """Next instant the runner must reach: the next event or the next checkpoint boundary."""
+        now = self.engine.clock.now_ms
+        boundary = (now // self.checkpoint_ms + 1) * self.checkpoint_ms
+        nxt = self.engine.queue.peek_time()
+        return boundary if nxt is None else min(nxt, boundary)
+
+    def advance(self, until_ms: int) -> int:
+        """Process events up to until_ms (never past a checkpoint boundary); no I/O here."""
+        boundary = (self.engine.clock.now_ms // self.checkpoint_ms + 1) * self.checkpoint_ms
+        processed = self.engine.run(until_ms=min(until_ms, boundary))
+        if self.engine.clock.now_ms == boundary:
+            self._checkpoint_pending = True
+        return processed
+
+    def housekeeping(self) -> None:
+        """Checkpoint if a boundary was reached, else flush if the policy says so. Safe to
+        retry after a transient failure: nothing is released before the TMS commit."""
+        if self._checkpoint_pending:
+            self.checkpoint()
+            self._checkpoint_pending = False
+        else:
+            self.flush_if_due()
 
     def close(self) -> None:
         """Graceful stop: final checkpoint, then deliver everything the broker will take."""

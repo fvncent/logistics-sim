@@ -13,7 +13,7 @@ endif
 COMPOSE = $(DOCKER) compose  # recursive: the Linux error fires only for docker targets
 UV ?= uv
 
-.PHONY: help sync up up-sim down clean migrate migrate-down seed lint fmt test test-integration soak reconcile topics
+.PHONY: help sync up up-sim down clean clean-scratch migrate migrate-down seed lint fmt test test-integration soak reconcile topics
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -32,6 +32,13 @@ down:
 
 clean:  ## down and delete volumes (TMS data, topics, ground truth, checkpoints)
 	$(COMPOSE) --profile core --profile sim down -v
+
+clean-scratch:  ## drop scratch databases (vlsim_*: tests, soaks, benchmarks); never touches tms
+	@$(COMPOSE) exec -T tms-postgres psql -U vlsim -d tms -Atc \
+	  "SELECT datname FROM pg_database WHERE datname LIKE 'vlsim\_%'" | while read -r db; do \
+	    echo "dropping $$db"; \
+	    $(COMPOSE) exec -T tms-postgres psql -q -U vlsim -d tms -c "DROP DATABASE \"$$db\" WITH (FORCE)" < /dev/null; \
+	  done
 
 migrate:  ## apply TMS migrations (needs `make up`)
 	$(UV) run alembic upgrade head
@@ -58,8 +65,11 @@ test:
 test-integration:  ## needs `make up`
 	$(UV) run pytest -m integration
 
-soak:
-	@echo "make soak is implemented in M6" >&2; exit 2
+SOAK_HOURS ?= 24
+SOAK_SPEED ?= 60
+SOAK_MODE ?= host
+soak:  ## live run for SOAK_HOURS with a crash + Redpanda pause, CSV samples, then reconcile
+	PATH="$(dir $(DOCKER)):$$PATH" SOAK_HOURS=$(SOAK_HOURS) SOAK_SPEED=$(SOAK_SPEED) SOAK_MODE=$(SOAK_MODE) ./scripts/soak.sh
 
 RUN ?= default
 reconcile:  ## ground truth vs Redpanda vs Postgres for run $(RUN) (after a clean stop)
