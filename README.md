@@ -10,6 +10,9 @@ See [docs/SPEC.md](docs/SPEC.md). Full run instructions and an architecture diag
 make up      # Postgres + Redpanda (Compose profile "core")
 make migrate # apply TMS schema (Alembic)
 make seed    # deterministic, idempotent master data (PRESET=s|m)
+make topics  # create Redpanda topics (6 partitions, 7-day retention)
+uv run vlsim simulate --days 7 --run-id demo   # batch run: Postgres + ground truth + Redpanda
+make reconcile RUN=demo                         # ground truth vs topics vs Postgres
 make lint
 make test
 make down
