@@ -23,6 +23,10 @@ def create_run(
     (run_dir / MANIFEST).write_text(json.dumps(manifest, sort_keys=True, indent=2))
 
 
+def has_run(run_dir: Path) -> bool:
+    return (run_dir / MANIFEST).exists()
+
+
 def load_run(run_dir: Path) -> dict[str, Any]:
     data: dict[str, Any] = json.loads((run_dir / MANIFEST).read_text())
     return data
