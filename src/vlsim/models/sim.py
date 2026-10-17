@@ -3,12 +3,17 @@
 Order at every checkpoint boundary: run events up to the boundary -> flush TMS writes ->
 save the checkpoint. The database is therefore never behind a saved checkpoint; it may be ahead
 after a crash, which idempotent monotonic upserts absorb on replay (ADR 0008).
+
+Flush cadence is mode-dependent (ADR 0009): fast runs flush on a sim-time grid
+(`SimTimeFlush`); live mode flushes about every second of wall time
+(`vlsim.engine.live.WallClockFlush`). A flush always commits Postgres first and only then
+releases the matching events to the emitters, so topics never run ahead of the database.
 """
 
 from __future__ import annotations
 
 from collections import Counter
-from typing import Any
+from typing import Any, Protocol
 
 from vlsim.config import SimConfig
 from vlsim.engine.checkpoint import CheckpointStore
@@ -19,13 +24,40 @@ from vlsim.models.routes import _offset_minutes
 from vlsim.ports import TmsService
 
 
+class FlushPolicy(Protocol):
+    def due(self, sim_now_ms: int) -> bool: ...
+
+    def flushed(self, sim_now_ms: int) -> None: ...
+
+
+class SimTimeFlush:
+    """Fast runs: flush whenever sim time crosses the next multiple of `interval_ms`."""
+
+    def __init__(self, interval_ms: int) -> None:
+        self.interval_ms = interval_ms
+        self._last_slot: int | None = None
+
+    def due(self, sim_now_ms: int) -> bool:
+        return self._last_slot is None or sim_now_ms // self.interval_ms > self._last_slot
+
+    def flushed(self, sim_now_ms: int) -> None:
+        self._last_slot = sim_now_ms // self.interval_ms
+
+
 class Simulation:
-    def __init__(self, cfg: SimConfig, engine: SimEngine, store: CheckpointStore | None) -> None:
+    def __init__(
+        self,
+        cfg: SimConfig,
+        engine: SimEngine,
+        store: CheckpointStore | None,
+        flush_policy: FlushPolicy | None = None,
+    ) -> None:
         self.cfg = cfg
         self.engine = engine
         self.store = store
         self.flush_ms = cfg.operations.runner.flush_interval_sim_minutes * MINUTE_MS
         self.checkpoint_ms = cfg.base.checkpoint.interval_sim_minutes * MINUTE_MS
+        self.flush_policy: FlushPolicy = flush_policy or SimTimeFlush(self.flush_ms)
 
     @classmethod
     def fresh(
@@ -75,13 +107,24 @@ class Simulation:
             processed += eng.run(until_ms=seg_end)
             if seg_end == next_ckpt:
                 self.checkpoint()
-            elif seg_end == next_flush:
-                eng.ctx.tms.flush()
-        eng.ctx.tms.flush()
+            else:
+                self.flush_if_due()
+        self.flush_outputs()
         return processed
 
-    def checkpoint(self) -> None:
+    def flush_outputs(self) -> None:
+        """Commit TMS writes, then (M5) release the events they correspond to."""
         self.engine.ctx.tms.flush()
+        self.flush_policy.flushed(self.engine.clock.now_ms)
+
+    def flush_if_due(self) -> bool:
+        if self.flush_policy.due(self.engine.clock.now_ms):
+            self.flush_outputs()
+            return True
+        return False
+
+    def checkpoint(self) -> None:
+        self.flush_outputs()
         if self.store is not None:
             self.store.save(self.engine.to_checkpoint())
 
