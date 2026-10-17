@@ -306,6 +306,7 @@ class SlaOps(_Frozen):
 
 class RunnerOps(_Frozen):
     flush_interval_sim_minutes: int = Field(gt=0)
+    live_flush_wall_seconds: float = Field(gt=0, le=60)
 
 
 class OperationsConfig(_Frozen):

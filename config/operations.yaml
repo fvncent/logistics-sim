@@ -44,5 +44,6 @@ sla:
   express_days_saved: 1
   promise_local_time: "21:00"
 
-runner:
-  flush_interval_sim_minutes: 15   # TMS write-behind flush cadence (plus before every checkpoint)
+runner:                            # flush cadence is mode-dependent (ADR 0009)
+  flush_interval_sim_minutes: 15   # fast/batch runs: sim-time grid (plus before every checkpoint)
+  live_flush_wall_seconds: 1.0     # live mode: wall-time cadence (vlsim.engine.live)

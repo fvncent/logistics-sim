@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from vlsim.config import load_config
@@ -70,3 +72,13 @@ def test_legal(old: str | None, new: str) -> None:
 def test_illegal(old: str | None, new: str) -> None:
     with pytest.raises(IllegalTransitionError):
         check_transition(old, new)
+
+
+def test_state_machine_doc_lists_every_transition() -> None:
+    doc = (Path(__file__).resolve().parents[3] / "docs" / "STATE_MACHINE.md").read_text()
+    for old, news in TRANSITIONS.items():
+        for new in news:
+            if new == "EXCEPTION":
+                continue  # documented once as "any non-terminal -> EXCEPTION"
+            assert f"    {old} --> {new}" in doc, f"{old} -> {new} missing from the diagram"
+    assert "any non-terminal | EXCEPTION" in doc
