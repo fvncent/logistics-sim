@@ -1,0 +1,46 @@
+# Server overlay (x86 Ubuntu 24.04, 16 GB): production Redpanda flags, required secrets, image
+# tag. Data placement is separate (compose.server-data.yaml) so the soak can run this exact
+# stack as an isolated project on named volumes. The README "Deploy" section sets
+# COMPOSE_FILE=compose.yaml:compose.server.yaml:compose.server-data.yaml in .env.
+# All values come from .env (never committed).
+
+services:
+  tms-postgres:
+    environment:
+      POSTGRES_PASSWORD: ${TMS_PG_PASSWORD:?set TMS_PG_PASSWORD in .env}
+
+  redpanda:
+    # Not dev-container: fsync on (developer_mode off, write caching off), 7-day retention by
+    # default, keep 5 GiB free on the data disk. Per-topic caps are set by `vlsim topics`
+    # (ADR 0010) and re-applied by sim-engine on every start.
+    command:
+      - redpanda
+      - start
+      - --overprovisioned            # shared host: no CPU pinning
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-localhost}:${REDPANDA_PORT:-19092}
+      - --set
+      - redpanda.developer_mode=false
+      - --set
+      - redpanda.write_caching_default=false
+      - --set
+      - redpanda.auto_create_topics_enabled=false
+      - --set
+      - redpanda.log_retention_ms=604800000
+      - --set
+      - redpanda.storage_min_free_bytes=5368709120
+
+  tms-service:
+    image: vlsim:${VLSIM_IMAGE_TAG:?set VLSIM_IMAGE_TAG in .env}
+    environment:
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:${TMS_PG_PASSWORD:?}@tms-postgres:5432/tms
+
+  sim-engine:
+    image: vlsim:${VLSIM_IMAGE_TAG:?set VLSIM_IMAGE_TAG in .env}
+    environment:
+      VLSIM_TMS_DSN: postgresql+psycopg://vlsim:${TMS_PG_PASSWORD:?}@tms-postgres:5432/tms

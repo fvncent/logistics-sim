@@ -153,7 +153,11 @@ def main(argv: list[str] | None = None) -> int:
         ("run", _cmd_run, "run live: paced 1x-1000x, resumable, SIGTERM-safe"),
     ):
         p = sub.add_parser(name, help=help_)
-        p.add_argument("--preset", default=None, help="scale preset (overrides base.yaml)")
+        p.add_argument(
+            "--preset",
+            default=os.environ.get("VLSIM_PRESET") or None,
+            help="scale preset (default: $VLSIM_PRESET, else base.yaml)",
+        )
         if name in ("simulate", "topics", "reconcile", "run"):
             p.add_argument(
                 "--bootstrap", default=os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
