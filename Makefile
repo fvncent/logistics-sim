@@ -58,8 +58,10 @@ test:
 test-integration:  ## needs `make up`
 	$(UV) run pytest -m integration
 
-soak:
-	@echo "make soak is implemented in M6" >&2; exit 2
+SOAK_HOURS ?= 24
+SOAK_SPEED ?= 60
+soak:  ## live S run for SOAK_HOURS with kill -9 + Redpanda pause, CSV samples, then reconcile
+	PATH="$(dir $(DOCKER)):$$PATH" SOAK_HOURS=$(SOAK_HOURS) SOAK_SPEED=$(SOAK_SPEED) ./scripts/soak.sh
 
 RUN ?= default
 reconcile:  ## ground truth vs Redpanda vs Postgres for run $(RUN) (after a clean stop)
