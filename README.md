@@ -111,8 +111,19 @@ Total: about 4.2 GiB of 16 GiB. Topic partitions, retention and size caps (ADR 0
 
 ### First-time setup
 
+Prerequisites on Ubuntu Server 24.04:
+
+| Prerequisite | Why |
+|---|---|
+| **Docker Engine** with the **compose plugin** (`docker compose`, not the old `docker-compose`) | Runs the stack |
+| **git** | Clone, upgrade and roll back |
+| **uv** 0.12.13 | Host-side tools: reconcile, tests |
+| **Python 3.12** | Ubuntu 24.04 ships it as `python3`; uv uses it, or downloads 3.12 itself, because the project pins `.python-version` 3.12 |
+| **tmux** | Keeps a soak running when SSH drops |
+| make, curl, openssl, ca-certificates | Used by the Makefile, the soak script and the setup commands |
+
 ```bash
-sudo apt-get update && sudo apt-get install -y ca-certificates curl git make openssl
+sudo apt-get update && sudo apt-get install -y ca-certificates curl git make openssl tmux python3 python3-venv
 ```
 ```bash
 sudo install -m 0755 -d /etc/apt/keyrings && sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
@@ -130,16 +141,48 @@ sudo usermod -aG docker "$USER"   # then log out and back in
 curl -LsSf https://astral.sh/uv/0.12.13/install.sh | sh   # host-side tools: reconcile, tests, host-mode soak
 ```
 
+Open a new login shell (for the docker group and uv on PATH), then check every prerequisite:
+
+```bash
+docker --version && docker compose version && git --version && uv --version && python3 --version && tmux -V && make --version | head -1
+```
+
+Expected: Docker Engine 27 or newer, Docker Compose v2.x, git, `uv 0.12.13`, `Python 3.12.x`, tmux, GNU Make. `docker run --rm hello-world` must work without sudo.
+
 Create the data directories on the 2 TB disk. `/srv/vlsim` must be on that disk: mount it there, or set `DATA_ROOT` to wherever it is mounted.
 
 ```bash
 sudo mkdir -p /srv/vlsim/postgres /srv/vlsim/redpanda /srv/vlsim/groundtruth /srv/vlsim/state
 ```
+Set each directory's owner to the UID its container runs as:
+
+| Directory | Container | UID:GID | Image user |
+|---|---|---|---|
+| `/srv/vlsim/postgres` | tms-postgres | **999:999** | `postgres` in `postgres:17.11-bookworm` |
+| `/srv/vlsim/redpanda` | redpanda | **101:101** | `redpanda` in `redpandadata/redpanda:v26.1.18` |
+| `/srv/vlsim/groundtruth` | sim-engine | **10001:10001** | `vlsim` in our image |
+| `/srv/vlsim/state` | sim-engine | **10001:10001** | `vlsim` in our image |
+
 ```bash
-sudo chown 101:101 /srv/vlsim/redpanda && sudo chown 10001:10001 /srv/vlsim/groundtruth /srv/vlsim/state && sudo chmod 700 /srv/vlsim/groundtruth
+sudo chown 999:999 /srv/vlsim/postgres && sudo chmod 700 /srv/vlsim/postgres
+```
+```bash
+sudo chown 101:101 /srv/vlsim/redpanda
+```
+```bash
+sudo chown 10001:10001 /srv/vlsim/groundtruth /srv/vlsim/state && sudo chmod 700 /srv/vlsim/groundtruth
+```
+```bash
+ls -ln /srv/vlsim
 ```
 
-`postgres/` is chowned to UID 999 by the Postgres image on its first start. UID 101 is Redpanda's user and 10001 is the `vlsim` user in our image.
+The last command must show owners 999, 101, 10001 and 10001. To confirm the UIDs from the pinned images:
+
+```bash
+docker run --rm --entrypoint id postgres:17.11-bookworm postgres && docker run --rm --entrypoint id redpandadata/redpanda:v26.1.18
+```
+
+Expected output: `uid=999(postgres)` and `uid=101(redpanda)`. Our image's UID 10001 is set in `docker/Dockerfile`. The Postgres image would also chown its directory itself on first start, but setting it explicitly avoids a failed first start if the directory already holds files.
 
 Clone, configure and start:
 
@@ -213,6 +256,52 @@ The old image is still present locally, so no rebuild is needed. If the upgrade 
 
 ### Soaks on the server
 
+#### Before a soak: keep the host from rebooting or restarting Docker
+
+`unattended-upgrades` can reboot the machine (`Automatic-Reboot`), and `needrestart` can restart services after library updates, including `dockerd`, which restarts every container. Either one ends a soak. Before a soak:
+
+```bash
+apt-config dump | grep -i 'Unattended-Upgrade::Automatic-Reboot'
+```
+
+If that prints `"true"`, or to make sure regardless:
+
+```bash
+echo 'Unattended-Upgrade::Automatic-Reboot "false";' | sudo tee /etc/apt/apt.conf.d/99vlsim-no-auto-reboot
+```
+
+For the duration of the soak, also stop the automatic apt runs entirely and pin Docker:
+
+```bash
+sudo systemctl stop apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+```
+```bash
+sudo apt-mark hold docker-ce docker-ce-cli containerd.io docker-compose-plugin
+```
+```bash
+[ -f /var/run/reboot-required ] && echo "REBOOT PENDING: reboot now, before starting the soak" || echo "no reboot pending"
+```
+
+After the soaks, re-enable everything and install whatever was held back:
+
+```bash
+sudo systemctl start apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service && sudo apt-mark unhold docker-ce docker-ce-cli containerd.io docker-compose-plugin
+```
+
+`99vlsim-no-auto-reboot` can stay, so reboots remain manual. Delete it if you want automatic reboots back.
+
+#### 1-hour smoke first
+
+Run this before either 24-hour soak. It exercises the same crash, pause, SIGTERM and reconcile sequence in one hour (60 sim hours at 60x):
+
+```bash
+cd ~/logistics-sim && make soak SOAK_MODE=container SOAK_HOURS=1 SOAK_SPEED=60 PRESET=s
+```
+
+Only start the 24-hour soaks if `result.txt` says `PASS`.
+
+#### 24-hour soaks
+
 Run them inside `tmux` so an SSH disconnect does not end them. `SOAK_MODE=container` runs the **real server stack** (compose.yaml + compose.server.yaml) as an isolated project `vlsimsoak`. It uses its own named volumes and ports (55532, 19192, 8100, 8181), so it does not touch the deployed stack, though both share the machine's RAM and CPU. The crash is a host-side SIGKILL, so the container's restart policy must bring it back. The run also fails if sim-engine was OOM-killed (480 MiB limit) or restarted more than once. The two soaks share the project name, so run them one after the other.
 
 ```bash
@@ -261,8 +350,50 @@ python3 -c "import json,sys; r=json.load(open(sys.argv[1])); print('ok', r['ok']
 
 `reconcile.json`:
 - `ok` must be `true`.
+- On a FAIL the isolated stack is left running for inspection. Remove it afterwards with `docker compose --env-file data/soak/<run>/soak.env down -v`.
 - Per topic, `missing_from_topic` and `unexpected_in_topic` must be 0. `duplicates_in_topic` > 0 is expected after the crash.
 - `postgres.status_mismatches` must be 0.
+
+#### If `missing_from_topic` is not 0: retention eviction or real loss?
+
+Reconcile reads each partition from the offset recorded when the run started (`run.json`). If Redpanda has since deleted the oldest segments, those events are counted as missing even though nothing was lost in delivery.
+
+**What can evict during a soak:**
+- **Time retention (7 days) cannot.** Messages carry the producer's **wall-clock** `CreateTime`, not sim time, so a 24 h soak, even at 60x, never reaches 7 days.
+- **Only the per-partition size caps can.** They are `retention.bytes` = 1 GiB (GPS) and 256 MiB (scans) per partition (ADR 0010). Redpanda deletes whole closed 128 MiB segments, oldest first.
+
+**Expected volume.** Measured on disk on the dev Mac (lz4, as stored): about **94 B per GPS message** and about **327 B per scan**, since scans go in small batches that compress poorly. GPS is keyed by vehicle; partition skew is 20% (S) and 17.5% (M) of vehicles in the busiest partition, which I widen to 30% for uneven activity. Scans are keyed by shipment, so they spread evenly.
+
+| Soak | Sim days | GPS total | Busiest GPS partition | vs 1 GiB cap | Scans per partition | vs 256 MiB cap |
+|---|---|---|---|---|---|---|
+| S, 24 h at 60x | 60 | ≈ 8.4 M msgs ≈ 0.8 GB | ≈ 240 MB | 23% | ≈ 30 MB | 12% |
+| M, 24 h at 60x | 60 | ≈ 24.6 M msgs ≈ 2.3 GB | ≈ 700 MB | **68%** | ≈ 140 MB | 55% |
+| S or M, 24 h at 1x | 1 | negligible | negligible | under 1% | negligible | under 1% |
+
+The 60 sim days include the 11.11 peak, which adds roughly 10–15%. **No eviction is expected in any of these soaks.** M at 60x is the closest, but still about 30% below the cap. A non-zero `missing_from_topic` is therefore presumed to be a real loss until the check below proves otherwise.
+
+**The check.** Leave the failed stack up. Then compare, per partition, the run's recorded start offset with Redpanda's current `LOG-START-OFFSET`:
+
+```bash
+RUN=$(ls -d data/soak/*/ | tail -1); ID=$(basename "$RUN"); ENVF="${RUN}soak.env"
+```
+```bash
+docker compose --env-file "$ENVF" run --rm --no-deps sim-engine cat "/groundtruth/$ID/run.json"
+```
+```bash
+docker compose --env-file "$ENVF" exec redpanda rpk topic describe telemetry.gps -p && docker compose --env-file "$ENVF" exec redpanda rpk topic describe tracking.scans -p
+```
+```bash
+docker compose --env-file "$ENVF" exec redpanda sh -c 'du -sk /var/lib/redpanda/data/kafka/telemetry.gps/* /var/lib/redpanda/data/kafka/tracking.scans/*'
+```
+
+| What you see | Verdict |
+|---|---|
+| For every partition, `LOG-START-OFFSET` ≤ the `start_offsets` value in `run.json` | **Nothing was evicted, so the missing events are a REAL LOSS.** Investigate: `events.log` (timing around the crash or pause), `sim.log`, and the emitter stats in the `live_stopped` line. |
+| Some partitions have `LOG-START-OFFSET` > their start offset, that partition's `du` is near its cap (about 1,048,576 kB GPS / 262,144 kB scans), and `missing_from_topic` ≤ the sum of (`LOG-START-OFFSET` − start offset) over those partitions | **Retention eviction.** Those were the run's oldest events. Not a delivery bug, but the soak outgrew the caps: lower `SOAK_SPEED`, or raise the cap in `config/transport.yaml` (ADR 0010) |
+| Eviction happened, but `missing_from_topic` is larger than the evicted count | **Both.** The excess over the evicted count is a real loss |
+
+In host mode (`SOAK_MODE=host`), `run.json` is at `data/soak/<run>/gt/<run>/run.json` and the broker is the dev one: `docker compose --profile core exec redpanda rpk topic describe <topic> -p`.
 
 ### Differences from the dev Mac (Apple Silicon)
 
