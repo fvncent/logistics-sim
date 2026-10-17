@@ -2,8 +2,13 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main]   # every push/merge to main is verified, not only PRs
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-test:
