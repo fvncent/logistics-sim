@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
 import sys
 import tempfile
@@ -53,5 +54,24 @@ def run(days: float = 1.0) -> dict[str, str]:
         return out
 
 
+GOLDEN = Path(__file__).resolve().parent / "golden" / "repro_hashes.json"
+KEYS = ("tracking.scans", "telemetry.gps", "tms", "engine_checkpoint")
+
+
+def write_golden() -> None:
+    """Deliberately record this platform's hashes. Refuses under CI: goldens are never
+    updated from a CI run."""
+    if os.environ.get("CI"):
+        sys.exit("refusing to write golden hashes under CI")
+    out = run()
+    golden = json.loads(GOLDEN.read_text())
+    golden[out["machine"]] = {k: out[k] for k in KEYS}
+    GOLDEN.write_text(json.dumps(golden, indent=2, sort_keys=True) + "\n")
+    print(f"wrote golden hashes for {out['machine']}; commit with the reason for the change")
+
+
 if __name__ == "__main__":
-    json.dump(run(), sys.stdout, sort_keys=True)
+    if sys.argv[1:] == ["--write-golden"]:
+        write_golden()
+    else:
+        json.dump(run(), sys.stdout, sort_keys=True)

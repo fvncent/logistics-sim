@@ -43,20 +43,35 @@ def runs() -> tuple[dict[str, str], dict[str, str]]:
     return _run("0"), _run("4242")
 
 
+def _mismatched(a: dict[str, str], b: dict[str, str]) -> list[str]:
+    return [k for k in KEYS if a.get(k) != b.get(k)]
+
+
 def test_two_runs_identical(runs: tuple[dict[str, str], dict[str, str]]) -> None:
-    a, b = runs
-    assert {k: a[k] for k in KEYS} == {k: b[k] for k in KEYS}
+    bad = _mismatched(*runs)
+    if bad:  # no hashes in the message: there is nothing to "accept" here, it is a bug
+        pytest.fail(f"NON-DETERMINISM: two fresh runs differ in {bad}", pytrace=False)
 
 
 def test_matches_golden_for_this_architecture(runs: tuple[dict[str, str], dict[str, str]]) -> None:
+    """Fails loudly and never prints hashes, so a mismatch cannot be "fixed" by pasting the
+    new value from a CI log. Regenerating goldens is a deliberate, local-only step:
+    `uv run python -m tests.repro_run --write-golden` (refuses to run under CI)."""
     got = runs[0]
     golden = json.loads(GOLDEN.read_text())
     machine = f"{platform.system()}-{platform.machine()}"  # libm differs by OS too
-    entry = json.dumps({machine: {k: got[k] for k in KEYS}}, indent=2)
     if machine not in golden:
-        pytest.fail(f"no golden hashes for {machine}; if intended, add:\n{entry}")
-    want = golden[machine]
-    assert {k: got[k] for k in KEYS} == {k: want[k] for k in KEYS}, (
-        f"output changed on {machine} (numpy {got['numpy']}). If deliberate, update the golden:\n"
-        + entry
-    )
+        pytest.fail(
+            f"REPRODUCIBILITY: no golden hashes recorded for {machine}. Record them on a "
+            "trusted machine of that platform with `python -m tests.repro_run --write-golden`.",
+            pytrace=False,
+        )
+    bad = _mismatched(got, golden[machine])
+    if bad:
+        pytest.fail(
+            f"REPRODUCIBILITY FAILURE on {machine} (numpy {got['numpy']}): output differs from "
+            f"the recorded golden in {bad}. Same seed + config must give identical output. "
+            "Find the cause (model change, dependency bump, platform maths); only if the change "
+            "is intended, regenerate locally with --write-golden and say why in the commit.",
+            pytrace=False,
+        )
