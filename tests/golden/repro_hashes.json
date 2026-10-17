@@ -1,0 +1,21 @@
+{
+  "Darwin-arm64": {
+    "engine_checkpoint": "b62b79ba246380634f8552bb9d2d8859567085234b5bb1d9f7a47e813a067087",
+    "telemetry.gps": "877c1ed1df70132b7501f281306d5815773ca46fc20e77fadb4dd9284833bf67",
+    "tms": "111e38b5b77d01b8eb341301650f70c556339679b3caee898e14685310c3ce0c",
+    "tracking.scans": "a091a4971baad793a009d7a62b88265700ec237af090251c7a7b8f1fd569503c"
+  },
+  "Linux-aarch64": {
+    "engine_checkpoint": "b62b79ba246380634f8552bb9d2d8859567085234b5bb1d9f7a47e813a067087",
+    "telemetry.gps": "877c1ed1df70132b7501f281306d5815773ca46fc20e77fadb4dd9284833bf67",
+    "tms": "111e38b5b77d01b8eb341301650f70c556339679b3caee898e14685310c3ce0c",
+    "tracking.scans": "a091a4971baad793a009d7a62b88265700ec237af090251c7a7b8f1fd569503c"
+  },
+  "Linux-x86_64": {
+    "engine_checkpoint": "b62b79ba246380634f8552bb9d2d8859567085234b5bb1d9f7a47e813a067087",
+    "telemetry.gps": "877c1ed1df70132b7501f281306d5815773ca46fc20e77fadb4dd9284833bf67",
+    "tms": "111e38b5b77d01b8eb341301650f70c556339679b3caee898e14685310c3ce0c",
+    "tracking.scans": "a091a4971baad793a009d7a62b88265700ec237af090251c7a7b8f1fd569503c"
+  },
+  "_note": "Per OS-arch golden hashes for tests/repro_run.py (S preset, 1 sim day, numpy 2.5.4). Recorded 2026-10-17: Darwin-arm64 native; Linux-x86_64 under Docker/QEMU emulation; Linux-aarch64 native in Docker. They happen to agree today, but are NOT guaranteed to (ADR 0012)."
+}
