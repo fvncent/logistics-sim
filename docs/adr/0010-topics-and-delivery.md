@@ -17,7 +17,7 @@
 - **Replication factor 1** (single broker). `vlsim topics` (and `open_simulation`) creates missing topics and re-applies retention with incremental config updates.
 
 *Producer*
-- `acks=all`, idempotence on, `linger.ms=50`, lz4 compression, `message.timeout.ms=30000`. All of these live in `config/transport.yaml`, which is **not** part of the config fingerprint: transport tuning never changes *which* events exist, so it must not block a resume.
+- `acks=all`, **idempotence off** (see the update below), `linger.ms=50`, lz4 compression, `message.timeout.ms=30000`. All of these live in `config/transport.yaml`, which is **not** part of the config fingerprint: transport tuning never changes *which* events exist, so it must not block a resume.
 
 *Delivery: at-least-once* (`vlsim.emitters.kafka.SpillingEmitter`)
 - Every message is tracked until its delivery report arrives. A failure appends it to an on-disk spill file (`<state_dir>/spill.jsonl`).
@@ -38,3 +38,9 @@
 - During an outage the simulation keeps going, and the spill grows on the state volume, up to 4 GiB before backpressure. Afterwards everything is re-sent; the M5 pause test spilled about 158k messages and reconciled with zero loss.
 - A checkpoint during an outage costs up to 5 s of wall time (the flush timeout).
 - Retention caps are per partition. Re-check them when M scale is measured on the server.
+
+**Update (2026-10-17, M6): idempotence disabled.**
+- **What happened.** The M6 soak smoke (kill -9 and restart, then a 30 s `docker pause` of Redpanda, then SIGTERM) failed reconcile: **one scan event was missing** from `tracking.scans`. It was present in ground truth, absent from the spill, and the producer had received a *successful* delivery report for it.
+- **Root cause.** During the pause, an in-flight ProduceRequest timed out. When it came back, Redpanda logged `Reseting epoch to 1` for the producer on each partition. The next message librdkafka sent to partition 0 was acknowledged without being stored. This is an interaction between librdkafka 2.16's idempotent-producer epoch bump (KIP-360) and Redpanda v26.1's epoch reset.
+- **Fix.** `enable.idempotence: false`, with `acks=all` and effectively unlimited retries. Now a successful delivery report means the broker stored the message, and any failure goes to the spill. The cost is possible duplicates from retries, which are already accepted and deduplicated on `event_id` (baseline artifact B4).
+- **Detection.** Reconcile caught this. That is exactly why the soak ends with reconcile and refuses to call a run a pass without it.
