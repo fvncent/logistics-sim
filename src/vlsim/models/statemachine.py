@@ -3,6 +3,11 @@
 CREATED -> PICKED_UP -> AT_ORIGIN_DEPOT -> LINEHAUL_DEPARTED -> AT_HUB (-> LINEHAUL_DEPARTED ...)
 -> AT_DEST_DEPOT -> OUT_FOR_DELIVERY -> DELIVERED | DELIVERY_FAILED (-> OUT_FOR_DELIVERY, at
 most 3 attempts, then RETURNED). EXCEPTION can interrupt any non-terminal stage.
+
+Added in M4 (accepted 2026-10-17, ASSUMPTIONS A40):
+  AT_ORIGIN_DEPOT -> AT_DEST_DEPOT      same-depot shipment, sorted locally
+  LINEHAUL_DEPARTED -> AT_DEST_DEPOT    the leg ends at the destination depot
+Documented with a diagram in docs/STATE_MACHINE.md (kept in sync by a test).
 """
 
 from __future__ import annotations
