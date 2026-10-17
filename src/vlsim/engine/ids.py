@@ -27,6 +27,12 @@ class EmissionCounters:
         self._counts[kind] = n
         return n
 
+    def take(self, kind: str, n: int) -> int:
+        """Reserve n consecutive values (e.g. a trip's GPS device_seq range); returns the first."""
+        first = self._counts.get(kind, 0) + 1
+        self._counts[kind] = first + n - 1
+        return first
+
     def data(self) -> dict[str, int]:
         return {k: self._counts[k] for k in sorted(self._counts)}
 

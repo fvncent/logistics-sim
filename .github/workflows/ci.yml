@@ -36,7 +36,9 @@ jobs:
             docker exec ${{ job.services.tms-postgres.id }} pg_isready -U vlsim -d tms && break
             sleep 2
           done
+      - name: Start Redpanda (Compose; service containers cannot pass its start arguments)
+        run: docker compose --profile core up -d --wait redpanda
       - run: make lint
       - run: make test
-      - name: Integration tests (Postgres only; Redpanda joins in M5)
-        run: uv run pytest -m "integration and not redpanda"
+      - name: Integration tests (Postgres service container + Compose Redpanda)
+        run: uv run pytest -m integration

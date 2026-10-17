@@ -8,7 +8,10 @@ Measured, not estimated. Machine: the development MacBook (Apple Silicon, arm64)
 | 2026-10-17 | **Full S-scale week**, `vlsim simulate --preset s --days 7`, fresh DB, timed with `/usr/bin/time` | 24,769 events and 98,458 TMS rows in **22.6 s wall** ≈ **1,100 events/s** (≈ 4,400 rows/s). Peak RSS 118 MB. |
 | 2026-10-17 | Same week with the in-memory TMS (no Postgres) | 1.5 s wall including ~0.7 s of imports ≈ 30k events/s of business logic. Postgres writes are ~90% of the full run. |
 
-S scale produces about 3.5k engine events per sim day (GPS pings are not engine events). At 1000x live speed that is about 40 events/s, well within budget. Not measured yet: M scale, and the amd64 Ubuntu server.
+| 2026-10-17 | **Full S-scale week including GPS and Redpanda** (M5): `vlsim simulate --preset s --days 7` on a fresh DB, emitting to ground truth and Redpanda, timed with `/usr/bin/time` | 24,769 engine events, **1,012,454 emitted events** (57,114 scans + 955,340 GPS pings) and 98,458 TMS rows in **57.8 s wall** ≈ **17.5k emitted events/s** (≈ 17.9k/s counting engine events too). Peak RSS 138 MB. Ground truth is 218 MB. `vlsim reconcile`: all 1,012,454 matched, 0 status mismatches. |
+| 2026-10-17 | Redpanda paused mid-run (M5 test, 2 sim days) | ~158k messages went through the disk spill and were all re-delivered: 155,920 events reconciled with 0 missing. |
+
+S scale produces about 3.5k engine events per sim day (GPS pings are not engine events). At 1000x live speed that is about 40 engine events/s. Including GPS, S emits about 145k events per sim day: about 1.7 events/s at 1x, and about 1,700/s at 1000x, about 10% of the measured 17.5k/s ceiling. The emit path costs about 35 µs per event (JSON, UUIDv5, ground-truth write, produce). Profile it before trying M at 1000x. Not measured yet: M scale, and the amd64 Ubuntu server.
 
 ## On-time analysis: why same-region (73%) trails far-region (86%) (M4 follow-up, 2026-10-17)
 

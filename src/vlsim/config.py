@@ -320,6 +320,59 @@ class OperationsConfig(_Frozen):
     runner: RunnerOps
 
 
+class EmitterTopics(_Frozen):
+    scans: str
+    gps: str
+
+
+class GpsSpec(_Frozen):
+    interval_seconds: int = Field(gt=0)
+    position_noise_m: float = Field(ge=0)
+    speed_noise_kmh: float = Field(ge=0)
+    fuel_start_pct: tuple[float, float]
+    fuel_pct_per_km: dict[VehicleType, float]
+    min_fuel_pct: float = Field(ge=0)
+
+
+class DeviceSpec(_Frozen):
+    depot_scanner: str
+    pickup_handheld: str
+    merchant_api: str
+    rider_handheld: str
+
+
+class EmittersConfig(_Frozen):
+    schema_v: int = Field(ge=1)
+    topics: EmitterTopics
+    gps: GpsSpec
+    devices: DeviceSpec
+
+
+class TopicSpec(_Frozen):
+    partitions: int = Field(ge=1)
+    retention_hours: int = Field(ge=1)
+    retention_bytes_per_partition: int = Field(ge=1)
+
+
+class EmitterTuning(_Frozen):
+    max_inflight: int = Field(ge=1)
+    drain_batch: int = Field(ge=1)
+    checkpoint_flush_timeout_s: float = Field(gt=0)
+    max_spill_bytes: int = Field(ge=1)
+
+
+class TransportConfig(_Frozen):
+    """Delivery tuning; deliberately outside SimConfig and its fingerprint (ADR 0010)."""
+
+    topics: dict[str, TopicSpec]
+    producer: dict[str, str | int | float | bool]
+    emitter: EmitterTuning
+
+
+def load_transport(config_dir: Path = DEFAULT_CONFIG_DIR) -> TransportConfig:
+    return TransportConfig.model_validate(_read_yaml(config_dir / "transport.yaml"))
+
+
 class BaseConfig(_Frozen):
     config_version: int
     seed: int = Field(ge=0)
@@ -353,6 +406,7 @@ class SimConfig(_Frozen):
     world: WorldConfig
     demand: DemandConfig
     operations: OperationsConfig
+    emitters: EmittersConfig
 
     def fingerprint(self) -> str:
         """SHA-256 of the canonical loaded config. Checkpoints refuse to restore on mismatch."""
@@ -384,6 +438,7 @@ def load_config(config_dir: Path = DEFAULT_CONFIG_DIR, preset: str | None = None
             raise ValueError(f"no vehicle_models configured for {vtype}")
     demand = DemandConfig.model_validate(_read_yaml(config_dir / "demand.yaml"))
     operations = OperationsConfig.model_validate(_read_yaml(config_dir / "operations.yaml"))
+    emitters = EmittersConfig.model_validate(_read_yaml(config_dir / "emitters.yaml"))
     if operations.carrier_id not in {c.carrier_id for c in world.carriers}:
         raise ValueError(f"operations.carrier_id {operations.carrier_id} is not a seeded carrier")
     provinces = [d.province for d in network.depots]
@@ -396,4 +451,5 @@ def load_config(config_dir: Path = DEFAULT_CONFIG_DIR, preset: str | None = None
         world=world,
         demand=demand,
         operations=operations,
+        emitters=emitters,
     )

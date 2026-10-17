@@ -61,3 +61,10 @@ The host Postgres port is 55432 because a native Postgres may already hold 5432 
 - Iterate `engine.state` dicts in sorted order only; restored dicts come back sorted.
 - `tests/fakes.InMemoryTms` mirrors `PostgresTms` semantics and validates every transition. Use it for fast tests.
 - `vlsim simulate --preset s --days N` runs a batch against TMS Postgres and resumes from `--state-dir`.
+
+## Emitters (M5)
+- Path: handler → `ctx.outbox` → (after the TMS commit) `EmitPipeline`: ground truth → `FaultInjector` (pass-through) → `SpillingEmitter` → Redpanda. Never emit from a handler directly (ADR 0009).
+- Scans: `SimEngine.emit_scan`, one per status write. GPS: `flow.start_gps` generates a trip's whole ping batch in one numpy call. The waypoints and seq base live in the trip state so a resume can regenerate them (ADR 0011).
+- `config/emitters.yaml` is fingerprinted. `config/transport.yaml` (partitions, retention, producer, spill) is not (ADR 0010).
+- `vlsim topics`, `vlsim simulate --run-id X`, `vlsim reconcile --run-id X` (or `make reconcile RUN=X`). Reconcile only after a clean stop.
+- Integration tests marked `redpanda` need `make up`. The pause test runs `docker compose pause redpanda`.

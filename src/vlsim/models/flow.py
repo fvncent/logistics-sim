@@ -16,9 +16,11 @@ import math
 from typing import Any, cast
 
 from vlsim.config import LaneKind, VehicleType
+from vlsim.emitters.gps import PingBatch, generate_pings, ping_count
 from vlsim.engine.clock import DAY_MS, HOUR_MS, MINUTE_MS, SECOND_MS, next_local_time_ms
 from vlsim.engine.core import Engine, HandlerRegistry
 from vlsim.engine.events import Event
+from vlsim.engine.rng import stream
 from vlsim.models.context import SimEngine, as_sim
 from vlsim.models.demand import draw_cod_vnd, draw_weight_g
 from vlsim.models.dock import DockQueue
@@ -30,13 +32,24 @@ Item = list[Any]  # [shipment_id, ready_ms, attempts]
 
 # --- shared helpers --------------------------------------------------------------------------
 def transition(
-    sim: SimEngine, sid: str, status: str, attempts: int, *, delivered: bool = False
+    sim: SimEngine,
+    sid: str,
+    status: str,
+    attempts: int,
+    *,
+    depot: str,
+    delivered: bool = False,
+    device: str | None = None,
+    driver: str | None = None,
+    reason: str | None = None,
 ) -> None:
-    """Write a shipment status (and the order's, when it changes) at the current sim time."""
+    """Write a shipment status (and the order's, when it changes) at the current sim time, and
+    queue the matching scan. The scan leaves only after this write commits (ADR 0009)."""
     sim.write_shipment(sid, status, attempts, delivered=delivered)
     order_status = ORDER_STATUS_FOR.get(status)
     if order_status is not None:
         sim.write_order(sid, order_status)
+    sim.emit_scan(sid, status, depot=depot, device=device, driver=driver, reason=reason)
     if status in ("DELIVERED", "RETURNED", "EXCEPTION"):
         sim.ctx.facts.pop(sid)  # terminal: no longer needed in the in-flight cache
 
@@ -168,6 +181,7 @@ def _create_order(sim: SimEngine) -> None:
     )
     sim.write_order(sid, "CREATED")  # order before shipment (foreign key)
     sim.write_shipment(sid, "CREATED", 0)
+    sim.emit_scan(sid, "CREATED", depot=origin, device=cfg.emitters.devices.merchant_api)
     _depot(sim, origin)["pickup"].append([sid, now, 0])
 
 
@@ -184,8 +198,9 @@ def on_pickup_run(engine: Engine, event: Event) -> None:
     if not items:
         return
     _depot(sim, dep)["pickup"] = [it for it in queue if it[1] >= now]
+    device = sim.device("pickup_handheld", dep)
     for item in items:
-        transition(sim, item[0], "PICKED_UP", item[2])
+        transition(sim, item[0], "PICKED_UP", item[2], depot=dep, device=device)
     travel = sim.ctx.cfg.operations.pickup.travel_minutes * MINUTE_MS
     job = {"kind": "pickup", "trip_id": None, "vehicle_id": None, "items": items}
     sim.schedule_in(travel, "dock.arrive", {"depot": dep, "job": job})
@@ -216,16 +231,17 @@ def on_dock_done(engine: Engine, event: Event) -> None:
     same_depot: list[Item] = []
     for sid, _ready, attempts in job["items"]:
         if _rng_hit(sim, "ops.damage", ops.exceptions.damage_per_unload):
-            transition(sim, sid, "EXCEPTION", attempts)  # reason: damage
+            transition(sim, sid, "EXCEPTION", attempts, depot=dep, reason="damage")
             continue
         f = sim.ctx.facts[sid]
         if job["kind"] == "pickup":
-            transition(sim, sid, "AT_ORIGIN_DEPOT", attempts)
+            transition(sim, sid, "AT_ORIGIN_DEPOT", attempts, depot=dep)
             if f.dest_depot == dep:
                 same_depot.append([sid, ready, attempts])
                 continue
         else:
-            transition(sim, sid, "AT_DEST_DEPOT" if f.dest_depot == dep else "AT_HUB", attempts)
+            status = "AT_DEST_DEPOT" if f.dest_depot == dep else "AT_HUB"
+            transition(sim, sid, status, attempts, depot=dep)
         _route_ready(sim, dep, [sid, ready, attempts])
     if same_depot:
         sim.schedule(ready, "sort.local", {"depot": dep, "items": same_depot})
@@ -241,7 +257,7 @@ def on_sort_local(engine: Engine, event: Event) -> None:
     sim = as_sim(engine)
     dep = event.payload["depot"]
     for sid, ready, attempts in event.payload["items"]:
-        transition(sim, sid, "AT_DEST_DEPOT", attempts)
+        transition(sim, sid, "AT_DEST_DEPOT", attempts, depot=dep)
         _depot(sim, dep)["lastmile"].append([sid, ready, attempts])
 
 
@@ -346,7 +362,7 @@ def _try_depart(sim: SimEngine, a: str, b: str, *, slot_ms: int, last: bool, dea
     )
     ctx.tms.write_trip_stops([TripStopRow(tid, it[0], i) for i, it in enumerate(loaded)])
     for it in loaded:
-        transition(sim, it[0], "LINEHAUL_DEPARTED", it[2])
+        transition(sim, it[0], "LINEHAUL_DEPARTED", it[2], depot=a, driver=did)
     sim.state["vehicles"][vid].update({"at": None, "busy": True})
     sim.state["drivers"][did].update({"at": None, "busy": True})
     sim.state["trips"][tid] = {
@@ -360,6 +376,8 @@ def _try_depart(sim: SimEngine, a: str, b: str, *, slot_ms: int, last: bool, dea
         "planned_arr": slot_ms + planned,
         "items": loaded,
     }
+    (la, oa), (lb, ob) = ctx.routes.coords[a], ctx.routes.coords[b]
+    start_gps(sim, tid, vid, [[now, la, oa], [now + actual, lb, ob]])
     sim.schedule_in(actual, "linehaul.arrive", {"trip_id": tid})
 
 
@@ -389,7 +407,7 @@ def on_linehaul_arrive(engine: Engine, event: Event) -> None:
     kept = []
     for it in trip["items"]:
         if _rng_hit(sim, "ops.lost", ops.exceptions.lost_per_linehaul_leg):
-            transition(sim, it[0], "EXCEPTION", it[2])  # reason: lost
+            transition(sim, it[0], "EXCEPTION", it[2], depot=b, reason="lost")
         else:
             kept.append(it)
     job = {"kind": "trip", "trip_id": tid, "vehicle_id": trip["vehicle"], "items": kept}
@@ -467,8 +485,9 @@ def _try_loop(sim: SimEngine, rider: str) -> None:
         )
     )
     ctx.tms.write_trip_stops([TripStopRow(tid, s[0], i + 1) for i, s in enumerate(stops)])
+    handheld = sim.device("rider_handheld", rider)
     for sid, attempts, _eta in stops:
-        transition(sim, sid, "OUT_FOR_DELIVERY", attempts)
+        transition(sim, sid, "OUT_FOR_DELIVERY", attempts, depot=dep, device=handheld, driver=rider)
     st["busy"] = True
     sim.state["vehicles"][bike]["busy"] = True
     sim.state["trips"][tid] = {
@@ -485,6 +504,7 @@ def _try_loop(sim: SimEngine, rider: str) -> None:
     for i, (_sid, _att, eta) in enumerate(stops):
         sim.schedule(eta, "lastmile.stop", {"trip_id": tid, "idx": i})
     sim.schedule(t + back, "lastmile.return", {"trip_id": tid})
+    start_gps(sim, tid, bike, _loop_waypoints(sim, dep, now, stops, t + back))
 
 
 def _plan_route(sim: SimEngine, dep: str, items: list[Item]) -> tuple[list[Item], list[int], int]:
@@ -522,16 +542,27 @@ def on_lastmile_stop(engine: Engine, event: Event) -> None:
     trip["next"] = idx + 1
     sid, attempts, _eta = trip["stops"][idx]
     f = ctx.facts[sid]
+    rider, dep = trip["driver"], trip["depot"]
+    who = {"depot": dep, "device": sim.device("rider_handheld", rider), "driver": rider}
     if f.quality == "bad" and _rng_hit(
         sim, "lastmile.unresolvable", ops.exceptions.unresolvable_if_bad_address
     ):
-        transition(sim, sid, "EXCEPTION", attempts + 1)  # reason: address_unresolvable
+        transition(sim, sid, "EXCEPTION", attempts + 1, reason="address_unresolvable", **who)
         return
     fp = ops.lastmile.fail_prob
-    p_fail = fp.base + (fp.ambiguous if f.quality == "ambiguous" else 0.0)
-    p_fail += (fp.bad if f.quality == "bad" else 0.0) + (fp.cod if f.cod_vnd else 0.0)
-    if _rng_hit(sim, "lastmile.outcome", p_fail):
-        transition(sim, sid, "DELIVERY_FAILED", attempts + 1)
+    p_addr = fp.ambiguous if f.quality == "ambiguous" else fp.bad if f.quality == "bad" else 0.0
+    p_cod = fp.cod if f.cod_vnd else 0.0
+    r = float(sim.rng("lastmile.outcome").random())
+    if r < fp.base + p_addr + p_cod:
+        # The same draw says which factor failed it (no extra randomness consumed).
+        reason = (
+            "recipient_unavailable"
+            if r < fp.base
+            else "address_issue"
+            if r < fp.base + p_addr
+            else "cod_refused"
+        )
+        transition(sim, sid, "DELIVERY_FAILED", attempts + 1, reason=reason, **who)
         trip["failed"].append([sid, sim.clock.now_ms, attempts + 1])
         return
     if f.cod_vnd:
@@ -539,7 +570,7 @@ def on_lastmile_stop(engine: Engine, event: Event) -> None:
         ctx.tms.write_cod_collection(
             CodCollectionRow(cid, sid, trip["driver"], f.cod_vnd, sim.clock.datetime())
         )
-    transition(sim, sid, "DELIVERED", attempts + 1, delivered=True)
+    transition(sim, sid, "DELIVERED", attempts + 1, delivered=True, **who)
 
 
 def on_lastmile_return(engine: Engine, event: Event) -> None:
@@ -564,13 +595,54 @@ def on_lastmile_return(engine: Engine, event: Event) -> None:
     )
     for sid, failed_ms, attempts in trip["failed"]:
         if attempts >= lm.max_attempts:
-            transition(sim, sid, "RETURNED", attempts)
+            transition(sim, sid, "RETURNED", attempts, depot=dep, reason="max_attempts")
         else:
             ready = failed_ms + lm.reattempt_delay_hours * HOUR_MS
             _depot(sim, dep)["lastmile"].append([sid, ready, attempts])
     sim.state["drivers"][rider]["busy"] = False
     sim.state["vehicles"][trip["vehicle"]]["busy"] = False
     _try_loop(sim, rider)
+
+
+# --- GPS ---------------------------------------------------------------------------------------
+def _loop_waypoints(
+    sim: SimEngine, dep: str, start: int, stops: list[list[Any]], end: int
+) -> list[list[float]]:
+    """Depot -> (arrive, dwell for the service time) at each stop -> depot."""
+    lm = sim.ctx.cfg.operations.lastmile
+    lat0, lon0 = sim.ctx.routes.coords[dep]
+    wps: list[list[float]] = [[start, lat0, lon0]]
+    prev = start
+    for sid, _att, eta in stops:
+        f = sim.ctx.facts[sid]
+        service = (lm.service_minutes + (lm.cod_extra_minutes if f.cod_vnd else 0)) * MINUTE_MS
+        arrive = eta - min(service, (eta - prev) // 2)
+        wps += [[arrive, f.lat, f.lon], [eta, f.lat, f.lon]]
+        prev = eta
+    wps.append([end, lat0, lon0])
+    return wps
+
+
+def start_gps(sim: SimEngine, tid: str, vid: str, waypoints: list[list[float]]) -> None:
+    """Allocate the trip's device_seq range and queue its whole ping batch (ADR 0010)."""
+    interval = sim.ctx.cfg.emitters.gps.interval_seconds * SECOND_MS
+    n = ping_count(int(waypoints[0][0]), int(waypoints[-1][0]), interval)
+    base = sim.counters.take(f"{sim.ctx.cfg.emitters.topics.gps}:{vid}", n)
+    sim.state["trips"][tid]["gps"] = {"base_seq": base, "waypoints": waypoints}
+    sim.ctx.outbox.add_gps(gps_batch(sim, tid, sim.state["trips"][tid]))
+
+
+def gps_batch(sim: SimEngine, tid: str, trip: dict[str, Any]) -> PingBatch:
+    v = sim.ctx.vehicles[trip["vehicle"]]
+    return generate_pings(
+        vehicle_id=v.vehicle_id,
+        vehicle_type=v.type,
+        waypoints=trip["gps"]["waypoints"],
+        base_seq=trip["gps"]["base_seq"],
+        spec=sim.ctx.cfg.emitters.gps,
+        circuity=sim.ctx.routes.circuity,
+        rng=stream(sim.seed, f"gps.{tid}"),
+    )
 
 
 def registry() -> HandlerRegistry:

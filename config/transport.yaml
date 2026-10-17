@@ -1,0 +1,19 @@
+# Transport tuning (ADR 0010). NOT part of the config fingerprint: it changes how events are
+# delivered, never which events exist, so retuning it never blocks a resume.
+topics:
+  tracking.scans: {partitions: 6, retention_hours: 168, retention_bytes_per_partition: 268435456}
+  telemetry.gps: {partitions: 6, retention_hours: 168, retention_bytes_per_partition: 1073741824}
+
+producer:                   # confluent-kafka / librdkafka settings
+  acks: all
+  enable.idempotence: true
+  linger.ms: 50
+  compression.type: lz4
+  message.timeout.ms: 30000
+  queue.buffering.max.messages: 500000
+
+emitter:
+  max_inflight: 200000      # unacknowledged messages held in memory; beyond this, spill to disk
+  drain_batch: 5000         # spilled messages re-sent per service() call once healthy
+  checkpoint_flush_timeout_s: 5.0   # wait this long for acks at a checkpoint, then spill the rest
+  max_spill_bytes: 4294967296       # backpressure: stop simulating until the spill drains below

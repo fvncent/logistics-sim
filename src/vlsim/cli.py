@@ -52,31 +52,67 @@ def _cmd_seed(args: argparse.Namespace) -> int:
 
 
 def _cmd_simulate(args: argparse.Namespace) -> int:
-    """Batch run (no wall-clock pacing): resume from the checkpoint store or start fresh."""
+    """Batch run (no wall-clock pacing): resume from the state dir or start fresh, then stop
+    gracefully (final checkpoint, deliver or spill everything)."""
     import json  # noqa: PLC0415
 
     from sqlalchemy import create_engine  # noqa: PLC0415
 
-    from vlsim.engine.checkpoint import CheckpointStore  # noqa: PLC0415
+    from vlsim.config import load_transport  # noqa: PLC0415
     from vlsim.engine.clock import DAY_MS  # noqa: PLC0415
-    from vlsim.models.sim import Simulation  # noqa: PLC0415
+    from vlsim.runtime import open_simulation  # noqa: PLC0415
     from vlsim.tms.service import PostgresTms  # noqa: PLC0415
     from vlsim.tms.settings import tms_dsn  # noqa: PLC0415
 
     cfg = load_config(_config_dir(), args.preset)
     tms = PostgresTms(create_engine(tms_dsn()))
-    store = CheckpointStore(Path(args.state_dir) / "checkpoints.sqlite")
-    sim = Simulation.open(cfg, tms, store)
+    sim = open_simulation(
+        cfg,
+        tms,
+        state_dir=Path(args.state_dir),
+        transport=load_transport(_config_dir()),
+        bootstrap=None if args.no_emit else args.bootstrap,
+        ground_truth_root=Path(args.ground_truth_dir),
+        run_id=args.run_id,
+    )
     start_events = sim.engine.events_processed
-    end = sim.engine.clock.now_ms + int(args.days * DAY_MS)
-    sim.run_until(end)
-    sim.checkpoint()
+    sim.run_until(sim.engine.clock.now_ms + int(args.days * DAY_MS))
+    sim.close()
     summary = sim.summary() | {
         "events_this_run": sim.engine.events_processed - start_events,
         "tms_rows_flushed": tms.rows_flushed,
     }
+    if sim.pipeline is not None:
+        sink = sim.pipeline.sink
+        summary |= {"released": sim.pipeline.released, "emitter": dict(getattr(sink, "stats", {}))}
     print(json.dumps(summary, sort_keys=True))
     return 0
+
+
+def _cmd_topics(args: argparse.Namespace) -> int:
+    from vlsim.config import load_transport  # noqa: PLC0415
+    from vlsim.emitters.topics import ensure_topics  # noqa: PLC0415
+
+    cfg = load_config(_config_dir(), args.preset)
+    names = [cfg.emitters.topics.scans, cfg.emitters.topics.gps]
+    ensure_topics(args.bootstrap, load_transport(_config_dir()), names)
+    log.info("topics_ok", topics=names)
+    return 0
+
+
+def _cmd_reconcile(args: argparse.Namespace) -> int:
+    import json  # noqa: PLC0415
+
+    from sqlalchemy import create_engine  # noqa: PLC0415
+
+    from vlsim.tms.settings import tms_dsn  # noqa: PLC0415
+    from vlsim.validation.reconcile import reconcile  # noqa: PLC0415
+
+    report = reconcile(
+        Path(args.ground_truth_dir) / args.run_id, args.bootstrap, create_engine(tms_dsn())
+    )
+    print(json.dumps(report, indent=2, sort_keys=True))
+    return 0 if report["ok"] else 1
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -93,13 +129,26 @@ def main(argv: list[str] | None = None) -> int:
         ("config-check", _cmd_config_check, "validate config and print a summary"),
         ("seed", _cmd_seed, "upsert deterministic master data into TMS Postgres"),
         ("simulate", _cmd_simulate, "batch-run N sim days against TMS Postgres (resumes)"),
+        ("topics", _cmd_topics, "create/align Redpanda topics (partitions, retention)"),
+        ("reconcile", _cmd_reconcile, "compare ground truth with Redpanda and Postgres"),
         ("run", _cmd_run, "run the simulator live (not yet implemented)"),
     ):
         p = sub.add_parser(name, help=help_)
         p.add_argument("--preset", default=None, help="scale preset (overrides base.yaml)")
+        if name in ("simulate", "topics", "reconcile"):
+            p.add_argument(
+                "--bootstrap", default=os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+            )
+        if name in ("simulate", "reconcile"):
+            p.add_argument("--run-id", default=os.environ.get("VLSIM_RUN_ID", "default"))
+            p.add_argument(
+                "--ground-truth-dir",
+                default=os.environ.get("VLSIM_GROUND_TRUTH_DIR", "data/groundtruth"),
+            )
         if name == "simulate":
             p.add_argument("--days", type=float, default=7.0)
             p.add_argument("--state-dir", default=os.environ.get("VLSIM_STATE_DIR", "data/state"))
+            p.add_argument("--no-emit", action="store_true", help="skip ground truth and topics")
         p.set_defaults(func=fn)
     args = parser.parse_args(argv)
     configure_logging(args.log_level)

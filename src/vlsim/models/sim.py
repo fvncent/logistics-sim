@@ -16,6 +16,7 @@ from collections import Counter
 from typing import Any, Protocol
 
 from vlsim.config import SimConfig
+from vlsim.emitters.pipeline import EmitPipeline
 from vlsim.engine.checkpoint import CheckpointStore
 from vlsim.engine.clock import MINUTE_MS, ms_from_datetime
 from vlsim.models import flow
@@ -51,17 +52,23 @@ class Simulation:
         engine: SimEngine,
         store: CheckpointStore | None,
         flush_policy: FlushPolicy | None = None,
+        pipeline: EmitPipeline | None = None,
     ) -> None:
         self.cfg = cfg
         self.engine = engine
         self.store = store
+        self.pipeline = pipeline
         self.flush_ms = cfg.operations.runner.flush_interval_sim_minutes * MINUTE_MS
         self.checkpoint_ms = cfg.base.checkpoint.interval_sim_minutes * MINUTE_MS
         self.flush_policy: FlushPolicy = flush_policy or SimTimeFlush(self.flush_ms)
 
     @classmethod
     def fresh(
-        cls, cfg: SimConfig, tms: TmsService, store: CheckpointStore | None = None
+        cls,
+        cfg: SimConfig,
+        tms: TmsService,
+        store: CheckpointStore | None = None,
+        pipeline: EmitPipeline | None = None,
     ) -> Simulation:
         engine = SimEngine(
             seed=cfg.base.seed,
@@ -72,10 +79,16 @@ class Simulation:
         )
         engine.ctx = build_context(cfg, tms)
         flow.bootstrap(engine)
-        return cls(cfg, engine, store)
+        return cls(cfg, engine, store, pipeline=pipeline)
 
     @classmethod
-    def resume(cls, cfg: SimConfig, tms: TmsService, store: CheckpointStore) -> Simulation | None:
+    def resume(
+        cls,
+        cfg: SimConfig,
+        tms: TmsService,
+        store: CheckpointStore,
+        pipeline: EmitPipeline | None = None,
+    ) -> Simulation | None:
         """Restore from the latest checkpoint (refused if the config changed), or None."""
         data = store.load_latest()
         if data is None:
@@ -89,11 +102,28 @@ class Simulation:
             raise RuntimeError(
                 f"checkpoint references shipments missing from TMS: {sorted(missing)[:5]}"
             )
-        return cls(cfg, engine, store)
+        if pipeline is not None:
+            if "emitters" not in data:
+                raise RuntimeError("checkpoint was taken without emitters; cannot resume emitting")
+            # Cut ground truth back to the checkpoint and resume the spill where it was.
+            pipeline.restore(data["emitters"])
+        # Pings after the checkpoint instant were never released: regenerate them per trip.
+        now = engine.clock.now_ms
+        for tid in sorted(engine.state["trips"]):
+            trip = engine.state["trips"][tid]
+            if "gps" in trip:
+                engine.ctx.outbox.add_gps(flow.gps_batch(engine, tid, trip), after_ms=now)
+        return cls(cfg, engine, store, pipeline=pipeline)
 
     @classmethod
-    def open(cls, cfg: SimConfig, tms: TmsService, store: CheckpointStore) -> Simulation:
-        return cls.resume(cfg, tms, store) or cls.fresh(cfg, tms, store)
+    def open(
+        cls,
+        cfg: SimConfig,
+        tms: TmsService,
+        store: CheckpointStore,
+        pipeline: EmitPipeline | None = None,
+    ) -> Simulation:
+        return cls.resume(cfg, tms, store, pipeline) or cls.fresh(cfg, tms, store, pipeline)
 
     def run_until(self, end_ms: int) -> int:
         """Advance to end_ms; flush on the flush grid and checkpoint on the checkpoint grid
@@ -113,9 +143,15 @@ class Simulation:
         return processed
 
     def flush_outputs(self) -> None:
-        """Commit TMS writes, then (M5) release the events they correspond to."""
+        """Commit TMS writes, then release the events they correspond to (ADR 0009). If the
+        commit raises, nothing is released."""
+        now = self.engine.clock.now_ms
         self.engine.ctx.tms.flush()
-        self.flush_policy.flushed(self.engine.clock.now_ms)
+        if self.pipeline is not None:
+            self.pipeline.release(self.engine.ctx.outbox, now)
+        else:
+            self.engine.ctx.outbox.release(now)  # no emitters configured: discard
+        self.flush_policy.flushed(now)
 
     def flush_if_due(self) -> bool:
         if self.flush_policy.due(self.engine.clock.now_ms):
@@ -124,9 +160,21 @@ class Simulation:
         return False
 
     def checkpoint(self) -> None:
+        """Flush (DB, then events), make emitted output durable, then save the checkpoint."""
         self.flush_outputs()
-        if self.store is not None:
-            self.store.save(self.engine.to_checkpoint())
+        if self.store is None:
+            return
+        emitters = self.pipeline.checkpoint() if self.pipeline is not None else None
+        data = self.engine.to_checkpoint()
+        if emitters is not None:
+            data["emitters"] = emitters  # ground-truth watermark + spill cursor
+        self.store.save(data)
+
+    def close(self) -> None:
+        """Graceful stop: final checkpoint, then deliver everything the broker will take."""
+        self.checkpoint()
+        if self.pipeline is not None:
+            self.pipeline.close()
 
     def in_flight(self) -> dict[str, str]:
         """shipment_id -> where the engine holds it (queue or trip), for conservation checks."""

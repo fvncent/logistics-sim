@@ -13,7 +13,7 @@ endif
 COMPOSE = $(DOCKER) compose  # recursive: the Linux error fires only for docker targets
 UV ?= uv
 
-.PHONY: help sync up up-sim down clean migrate migrate-down seed lint fmt test test-integration soak reconcile
+.PHONY: help sync up up-sim down clean migrate migrate-down seed lint fmt test test-integration soak reconcile topics
 
 help:
 	@grep -E '^[a-z-]+:' Makefile | cut -d: -f1
@@ -61,5 +61,9 @@ test-integration:  ## needs `make up`
 soak:
 	@echo "make soak is implemented in M6" >&2; exit 2
 
-reconcile:
-	@echo "make reconcile is implemented in M5" >&2; exit 2
+RUN ?= default
+reconcile:  ## ground truth vs Redpanda vs Postgres for run $(RUN) (after a clean stop)
+	$(UV) run vlsim reconcile --run-id $(RUN)
+
+topics:  ## create/align Redpanda topics
+	$(UV) run vlsim topics

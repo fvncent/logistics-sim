@@ -1,0 +1,19 @@
+# Event output. Part of the config fingerprint: changing anything here changes what is emitted.
+schema_v: 1
+topics:
+  scans: tracking.scans    # key: shipment_id
+  gps: telemetry.gps       # key: vehicle_id
+
+gps:                        # modelling assumptions (docs/ASSUMPTIONS.md)
+  interval_seconds: 10      # SPEC: one ping per 10 s per moving vehicle
+  position_noise_m: 8       # gaussian receiver noise
+  speed_noise_kmh: 2.0
+  fuel_start_pct: [85.0, 100.0]           # uniform at trip start (refuelled before each trip)
+  fuel_pct_per_km: {motorbike: 0.6, van: 0.12, truck: 0.08}
+  min_fuel_pct: 5.0
+
+devices:                    # device_id formats on scans
+  depot_scanner: "SC-{code}"      # sorter/dock scans at a depot
+  pickup_handheld: "PU-{code}"    # first-mile pickup crew
+  merchant_api: "API"             # CREATED arrives via the merchant integration
+  rider_handheld: "HH-{num}"      # num = the rider's driver number (D-0412 -> HH-0412)

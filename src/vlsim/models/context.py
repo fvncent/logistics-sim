@@ -20,6 +20,7 @@ from typing import Any, cast
 import numpy as np
 
 from vlsim.config import SimConfig
+from vlsim.emitters.outbox import Outbox
 from vlsim.engine.core import Engine
 from vlsim.models.demand import DemandModel, zipf_probabilities
 from vlsim.models.routes import Routes
@@ -49,6 +50,7 @@ class Context:
     riders_by_depot: dict[str, list[str]]
     crew: frozenset[str]  # line-haul drivers (everyone who is not a rider)
     facts: dict[str, ShipmentFacts] = field(default_factory=dict)
+    outbox: Outbox = field(default_factory=Outbox)
 
 
 def build_context(cfg: SimConfig, tms: TmsService) -> Context:
@@ -133,6 +135,39 @@ class SimEngine(Engine):
                 status=status,
             )
         )
+
+    def device(self, kind: str, who: str) -> str:
+        """Device id for a depot code / depot id (scanners) or a driver id (handhelds)."""
+        fmt = getattr(self.ctx.cfg.emitters.devices, kind)
+        code = who.removeprefix("DP-")
+        num = who.removeprefix("D-")
+        return str(fmt.format(code=code, num=num))
+
+    def emit_scan(
+        self,
+        sid: str,
+        status: str,
+        *,
+        depot: str,
+        device: str | None = None,
+        driver: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Build the tracking.scans event (deterministic event_id) and queue it in the outbox."""
+        em = self.ctx.cfg.emitters
+        content = {
+            "depot": depot.removeprefix("DP-"),
+            "device_id": device or self.device("depot_scanner", depot),
+            "driver_id": driver,
+            "event_time": self.clock.isoformat(),
+            "event_type": status,
+            "reason_code": reason,
+            "schema_v": em.schema_v,
+            "shipment_id": sid,
+        }
+        n = self.counters.next(em.topics.scans)
+        event_id = self.counters.event_id(em.topics.scans, n, content)
+        self.ctx.outbox.add_scan(sid, {"event_id": str(event_id), **content})
 
     def next_id(self, kind: str) -> int:
         seq: dict[str, int] = self.state["seq"]
