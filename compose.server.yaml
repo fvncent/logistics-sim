@@ -23,7 +23,7 @@ services:
       - --node-id=0
       - --check=false
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-localhost}:${REDPANDA_PORT:-19092}
+      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-127.0.0.1}:${REDPANDA_PORT:-19092}
       - --set
       - redpanda.developer_mode=false
       - --set

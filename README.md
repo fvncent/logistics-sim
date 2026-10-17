@@ -207,7 +207,7 @@ docker compose ps && curl -s localhost:8081/health && curl -s localhost:8081/met
 Reaching it from your laptop:
 - **Recommended:** keep `BIND_ADDR=127.0.0.1` and use `ssh -L 8081:127.0.0.1:8081 server`, or `tailscale serve --bg --tcp 8081 tcp://127.0.0.1:8081`.
 - **Binding the Tailscale interface directly:** set `BIND_ADDR` to the server's `100.x.y.z`. The interface must exist before Docker starts containers at boot. Add `printf '[Unit]\nAfter=tailscaled.service\nWants=tailscaled.service\n' | sudo tee /etc/systemd/system/docker.service.d/10-after-tailscale.conf && sudo systemctl daemon-reload`. This is **untested here**.
-- For Kafka clients on other machines, set `REDPANDA_ADVERTISE_HOST` to a name they can reach.
+- For Kafka clients on other machines, set `REDPANDA_ADVERTISE_HOST` to an address they can reach. The default is `127.0.0.1`, deliberately not `localhost`, which Ubuntu resolves to IPv6 `::1` first while ports are published on IPv4 only (ADR 0004).
 - Never use `0.0.0.0`: Docker-published ports bypass `ufw`.
 
 ### Upgrade

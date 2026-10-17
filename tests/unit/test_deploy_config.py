@@ -57,6 +57,14 @@ def test_server_redpanda_is_durable_with_retention() -> None:
             "redpanda.log_retention_ms=604800000"} <= sets  # fmt: skip
 
 
+@pytest.mark.parametrize("doc", [BASE, SERVER])
+def test_kafka_advertises_ipv4_literal_not_localhost(doc: dict[str, object]) -> None:
+    """Ports publish on IPv4 127.0.0.1; "localhost" resolves to ::1 first on Ubuntu (ADR 0004)."""
+    args = " ".join(doc["services"]["redpanda"]["command"])  # type: ignore[index]
+    assert "external://${REDPANDA_ADVERTISE_HOST:-127.0.0.1}:" in args
+    assert "localhost" not in args
+
+
 def test_server_data_bind_mounts_cover_every_volume() -> None:
     assert set(DATA["volumes"]) == set(BASE["volumes"])
     for v in DATA["volumes"].values():

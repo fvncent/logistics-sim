@@ -26,7 +26,7 @@ from vlsim.tms.service import PostgresTms
 from vlsim.validation.reconcile import reconcile
 
 pytestmark = [pytest.mark.integration, pytest.mark.redpanda]
-BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "127.0.0.1:19092")
 TOPICS = ("tracking.scans", "telemetry.gps")
 
 

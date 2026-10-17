@@ -52,7 +52,7 @@ services:
       - --smp=1
       - --memory=1G
       - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
-      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-localhost}:${REDPANDA_PORT:-19092}
+      - --advertise-kafka-addr=internal://redpanda:9092,external://${REDPANDA_ADVERTISE_HOST:-127.0.0.1}:${REDPANDA_PORT:-19092}
     ports: ["${BIND_ADDR:-127.0.0.1}:${REDPANDA_PORT:-19092}:19092"]
     volumes: [redpanda-data:/var/lib/redpanda/data]
     healthcheck:

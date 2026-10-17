@@ -17,7 +17,7 @@ from tests.integration.conftest import ROOT, ScratchDatabases, migrate
 from vlsim.validation.reconcile import reconcile
 
 pytestmark = [pytest.mark.integration, pytest.mark.redpanda]
-BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "localhost:19092")
+BOOTSTRAP = os.environ.get("VLSIM_KAFKA_BOOTSTRAP", "127.0.0.1:19092")
 STOP_AT_DAYS = "0.4"  # ~35 s of wall time at 1000x
 
 
