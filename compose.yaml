@@ -57,25 +57,41 @@ services:
     environment:
       VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
     ports: ["${TMS_API_PORT:-8000}:8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
       tms-postgres: {condition: service_healthy}
 
   sim-engine:
     profiles: [sim]
     image: vlsim:dev
-    command: ["vlsim", "run"]
+    command: ["vlsim", "run"]          # live mode; resumes from /state; SIGTERM-safe
+    stop_grace_period: 2m              # time for the final flush + checkpoint on `docker stop`
     environment:
       VLSIM_TMS_DSN: postgresql+psycopg://vlsim:vlsim@tms-postgres:5432/tms
       VLSIM_KAFKA_BOOTSTRAP: redpanda:9092
       VLSIM_GROUND_TRUTH_DIR: /groundtruth
       VLSIM_STATE_DIR: /state
+      VLSIM_SPEED: ${VLSIM_SPEED:-1}
+      VLSIM_RUN_ID: ${VLSIM_RUN_ID:-default}
+      VLSIM_HTTP_PORT: "8081"
+    ports: ["${SIM_HTTP_PORT:-8081}:8081"]   # /metrics /health /speed
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=5)"]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 60s
     volumes:
       - groundtruth:/groundtruth   # mounted ONLY here; never into Postgres or the platform
       - sim-state:/state
     depends_on:
       tms-postgres: {condition: service_healthy}
       redpanda: {condition: service_healthy}
-      tms-service: {condition: service_started}
+      tms-service: {condition: service_healthy}    # it applies the migrations
 
 volumes:
   tms-pgdata:

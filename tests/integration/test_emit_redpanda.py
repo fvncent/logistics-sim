@@ -127,3 +127,22 @@ def test_hard_crash_and_resume_still_reconciles(
     report = reconcile(tmp_path / "gt" / "crash", BOOTSTRAP, db)
     assert report["ok"], report
     assert report["topics"]["tracking.scans"]["duplicates_in_topic"] > 0  # replayed hours
+
+
+def test_kill_before_first_checkpoint_restarts_run_and_reconciles(
+    cfg: SimConfig, scratch_dbs: ScratchDatabases, tmp_path: Path
+) -> None:
+    db = seeded(scratch_dbs.create("vlsim_early_kill"), cfg)
+    first = _open(cfg, db, tmp_path, "early", load_transport())
+    first.engine.run(until_ms=_start(cfg) + 40 * 60_000)  # 40 sim-min: no checkpoint yet
+    first.flush_outputs()  # ground truth, topics and Postgres already hold early events
+    _sink(first).producer.flush(10)
+    del first  # killed before any checkpoint
+
+    again = _open(cfg, db, tmp_path, "early", load_transport())  # must not refuse the run dir
+    assert again.engine.clock.now_ms == _start(cfg)
+    again.run_until(_start(cfg) + 6 * HOUR_MS)
+    again.close()
+    report = reconcile(tmp_path / "gt" / "early", BOOTSTRAP, db)
+    assert report["ok"], report
+    assert report["topics"]["tracking.scans"]["duplicates_in_topic"] > 0
